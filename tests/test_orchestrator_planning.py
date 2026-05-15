@@ -1,0 +1,310 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from quick_env_setup import cli
+from quick_env_setup.models import InstallAction, InstallPlan
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_local_path_produces_install_plan() -> None:
+    from quick_env_setup.orchestrator import build_install_plan
+
+    plan = build_install_plan(source=str(FIXTURES / "web_project"))
+
+    assert isinstance(plan, InstallPlan)
+    assert plan.source_result.local_project_path == (FIXTURES / "web_project").resolve()
+    assert plan.actions
+    assert all(action.command is not None for action in plan.actions)
+
+
+def test_dry_run_does_not_execute_actions(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from quick_env_setup.models import MirrorConfig
+    from quick_env_setup.models import ProjectProfile, ProjectScanResult, PyTorchStrategy
+    from quick_env_setup.models import PythonRequirement, SourceResolutionResult, SourceSpec
+    from quick_env_setup.models import SystemInfo, DeviceInfo
+
+    fixture_root = (FIXTURES / "web_project").resolve()
+
+    plan = InstallPlan(
+        source_result=SourceResolutionResult(
+            source=SourceSpec(
+                raw=str(fixture_root),
+                source_type="local_path",
+                normalized=str(fixture_root),
+            ),
+            local_project_path=fixture_root,
+            clone_performed=False,
+        ),
+        system_info=SystemInfo(
+            os_name="linux",
+            arch="x86_64",
+            is_apple_silicon=False,
+            has_conda=True,
+            has_git=True,
+            python_executables=["python3"],
+        ),
+        project_scan=ProjectScanResult(
+            root=fixture_root,
+            detected_files=[],
+            dependency_files=[],
+            readme_path=None,
+            python_entry_candidates=[],
+            notebook_paths=[],
+            keywords=set(),
+            parsed_dependency_hints={},
+        ),
+        project_profile=ProjectProfile(
+            project_type="web",
+            confidence=0.8,
+            needs_pytorch=False,
+            recommended_env_manager="venv",
+            editable_install_recommended=False,
+        ),
+        python_requirement=PythonRequirement(
+            version="3.10",
+            source="default",
+            rationale="default",
+        ),
+        env_manager="venv",
+        env_name="web-project-env",
+        device_info=DeviceInfo(
+            accelerator_type="cpu",
+            gpu_name=None,
+            cuda_driver_version=None,
+            cuda_runtime_version=None,
+            nvidia_smi_available=False,
+        ),
+        pytorch_strategy=PyTorchStrategy(
+            required=False,
+            install_separately=False,
+            variant="none",
+            index_url=None,
+            packages=[],
+            stripped_requirements_path=None,
+            rationale="not needed",
+        ),
+        mirror_config=MirrorConfig(
+            enabled=False,
+            provider="none",
+            pip_index_url=None,
+            conda_channels=[],
+        ),
+        safety_level=1,
+        actions=[
+            InstallAction(
+                action_id="check-python",
+                kind="check",
+                command=["python", "--version"],
+                cwd=fixture_root,
+                env_overrides={},
+                risk_level="low",
+                description="Check Python availability.",
+            )
+        ],
+        warnings=[],
+        assumptions=[],
+    )
+
+    def fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("execute_install_plan should not be called during --dry-run")
+
+    monkeypatch.setattr("quick_env_setup.cli.build_install_plan", lambda **_: plan)
+    monkeypatch.setattr("quick_env_setup.cli.execute_install_plan", fail_if_called)
+
+    exit_code = cli.main(["--source", str(fixture_root), "--dry-run"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Plan summary" in captured.out
+    assert "check-python" in captured.out
+
+
+def test_deep_learning_fixture_defaults_to_conda() -> None:
+    from quick_env_setup.orchestrator import build_install_plan
+
+    plan = build_install_plan(source=str(FIXTURES / "deep_learning_project"))
+
+    assert plan.project_profile.project_type == "deep_learning"
+    assert plan.env_manager == "conda"
+
+
+def test_explicit_env_manager_override_beats_recommendation() -> None:
+    from quick_env_setup.orchestrator import build_install_plan
+
+    plan = build_install_plan(
+        source=str(FIXTURES / "deep_learning_project"),
+        env_manager="venv",
+    )
+
+    assert plan.project_profile.recommended_env_manager == "conda"
+    assert plan.env_manager == "venv"
+
+
+def test_level_1_plan_excludes_install_execution() -> None:
+    from quick_env_setup.orchestrator import build_install_plan
+
+    plan = build_install_plan(
+        source=str(FIXTURES / "deep_learning_project"),
+        safety_level=1,
+    )
+
+    risky_kinds = {action.kind for action in plan.actions}
+    assert "create_env" not in risky_kinds
+    assert "install_pytorch" not in risky_kinds
+    assert "install_dependencies" not in risky_kinds
+    assert any(action.kind == "check" for action in plan.actions)
+
+
+def test_high_risk_actions_are_filtered_without_explicit_flag() -> None:
+    from quick_env_setup.safety_policy import apply_safety_policy
+
+    allowed_actions, warnings = apply_safety_policy(
+        [
+            InstallAction(
+                action_id="run-demo",
+                kind="validate",
+                command=["python", "demo.py"],
+                cwd=(FIXTURES / "web_project").resolve(),
+                env_overrides={},
+                risk_level="high",
+                description="Run the demo entrypoint.",
+            )
+        ],
+        safety_level=3,
+        allow_high_risk=False,
+    )
+
+    assert allowed_actions == []
+    assert warnings
+    assert "high-risk actions require explicit approval flags" in warnings[0]
+
+
+def test_remote_git_source_plan_includes_git_check_and_clone(tmp_path: Path) -> None:
+    from quick_env_setup.orchestrator import build_install_plan
+
+    plan = build_install_plan(
+        source="https://github.com/example/project.git",
+        clone_dir=str(tmp_path),
+    )
+
+    action_ids = [action.action_id for action in plan.actions]
+    assert "check-git" in action_ids
+    assert "clone-source" in action_ids
+    assert plan.source_result.repo_url == "https://github.com/example/project.git"
+    assert plan.source_result.local_project_path == tmp_path / "project"
+
+
+def test_missing_conda_system_adds_prerequisite_check_and_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    from quick_env_setup.models import SystemInfo
+    from quick_env_setup.orchestrator import build_install_plan
+
+    monkeypatch.setattr(
+        "quick_env_setup.orchestrator.detect_system_info",
+        lambda **_: SystemInfo(
+            os_name="linux",
+            arch="x86_64",
+            is_apple_silicon=False,
+            has_conda=False,
+            has_git=True,
+            python_executables=["python3"],
+        ),
+    )
+
+    plan = build_install_plan(source=str(FIXTURES / "deep_learning_project"))
+
+    conda_check = next(action for action in plan.actions if action.action_id == "check-conda")
+    assert conda_check.command == ["conda", "--version"]
+    assert any("Conda was not detected" in warning for warning in plan.warnings)
+
+
+def test_run_demo_is_rejected_even_at_level_3() -> None:
+    from quick_env_setup.orchestrator import build_install_plan
+
+    with pytest.raises(NotImplementedError, match="run_demo"):
+        build_install_plan(
+            source=str(FIXTURES / "web_project"),
+            safety_level=3,
+            run_demo=True,
+        )
+
+
+def test_environment_yml_project_uses_conda_dependency_flow(tmp_path: Path) -> None:
+    from quick_env_setup.orchestrator import build_install_plan
+
+    project_root = tmp_path / "conda-project"
+    project_root.mkdir()
+    (project_root / "environment.yml").write_text(
+        "\n".join(
+            [
+                "name: conda-project",
+                "dependencies:",
+                "  - python=3.11",
+                "  - numpy",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    plan = build_install_plan(source=str(project_root), env_manager="conda")
+
+    install_action = next(
+        action for action in plan.actions if action.kind == "install_dependencies"
+    )
+    assert install_action.command == [
+        "conda",
+        "env",
+        "update",
+        "-n",
+        "conda-project-env",
+        "-f",
+        str(project_root / "environment.yml"),
+    ]
+
+
+def test_pytorch_install_is_not_split_when_strategy_disables_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    from quick_env_setup.models import PyTorchStrategy
+    from quick_env_setup.orchestrator import build_install_plan
+
+    monkeypatch.setattr(
+        "quick_env_setup.orchestrator.resolve_pytorch_strategy",
+        lambda *args, **kwargs: PyTorchStrategy(
+            required=True,
+            install_separately=False,
+            variant="cpu",
+            index_url=None,
+            packages=["torch"],
+            stripped_requirements_path=None,
+            rationale="Keep torch in the main dependency install flow.",
+        ),
+    )
+
+    plan = build_install_plan(source=str(FIXTURES / "deep_learning_project"))
+
+    assert all(action.kind != "install_pytorch" for action in plan.actions)
+
+
+def test_use_china_mirror_without_provider_uses_conservative_default() -> None:
+    from quick_env_setup.orchestrator import build_install_plan
+
+    plan = build_install_plan(
+        source=str(FIXTURES / "web_project"),
+        use_china_mirror=True,
+    )
+
+    assert plan.mirror_config.enabled is True
+    assert plan.mirror_config.provider == "tuna"
+
+
+def test_planner_action_risk_levels_come_from_safety_policy() -> None:
+    from quick_env_setup.orchestrator import build_install_plan
+    from quick_env_setup.safety_policy import risk_level_for_action_kind
+
+    plan = build_install_plan(source=str(FIXTURES / "deep_learning_project"))
+
+    for action in plan.actions:
+        assert action.risk_level == risk_level_for_action_kind(action.kind)
