@@ -1,14 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from quick_env_setup.logger import (
-    append_command_log_line,
-    artifact_path,
-    ensure_log_dir,
-)
 from quick_env_setup.models import (
     DeviceInfo,
+    FinalReport,
     InstallAction,
     InstallPlan,
     MirrorConfig,
@@ -19,129 +16,346 @@ from quick_env_setup.models import (
     SourceResolutionResult,
     SourceSpec,
     SystemInfo,
-    dataclass_to_dict,
+    ValidationReport,
 )
+from quick_env_setup.report_generator import generate_final_report
+from quick_env_setup.run_command_discoverer import discover_run_candidates
 
 
-def test_runtime_models_serialize_for_reporting(tmp_path: Path) -> None:
-    source = SourceSpec(
-        raw="./example-project",
-        source_type="local_path",
-        normalized=str(tmp_path / "example-project"),
+def test_discover_run_candidates_uses_readme_and_entrypoints(tmp_path: Path) -> None:
+    project_root = tmp_path / "demo-project"
+    (project_root / "src" / "demo_package").mkdir(parents=True)
+    (project_root / "README.md").write_text(
+        "\n".join(
+            [
+                "# Demo",
+                "Run the API locally:",
+                "```bash",
+                "uvicorn app:app --reload",
+                "python -m demo_package",
+                "```",
+            ]
+        ),
+        encoding="utf-8",
     )
-    source_result = SourceResolutionResult(
-        source=source,
-        local_project_path=tmp_path / "example-project",
-        clone_performed=False,
+    (project_root / "app.py").write_text("app = object()\n", encoding="utf-8")
+    (project_root / "demo.py").write_text("print('demo')\n", encoding="utf-8")
+    (project_root / "inference.py").write_text("print('inference')\n", encoding="utf-8")
+    (project_root / "src" / "demo_package" / "__main__.py").write_text(
+        "print('package')\n",
+        encoding="utf-8",
     )
-    system_info = SystemInfo(
-        os_name="linux",
-        arch="x86_64",
-        is_apple_silicon=False,
-        has_conda=True,
-        has_git=True,
-        python_executables=["python3"],
-    )
-    project_scan = ProjectScanResult(
-        root=tmp_path / "example-project",
-        detected_files=[tmp_path / "example-project" / "pyproject.toml"],
-        dependency_files=[tmp_path / "example-project" / "requirements.txt"],
-        readme_path=tmp_path / "example-project" / "README.md",
-        python_entry_candidates=["main.py"],
+
+    scan = ProjectScanResult(
+        root=project_root,
+        detected_files=[
+            project_root / "README.md",
+            project_root / "app.py",
+            project_root / "demo.py",
+            project_root / "inference.py",
+            project_root / "src" / "demo_package" / "__main__.py",
+        ],
+        dependency_files=[],
+        readme_path=project_root / "README.md",
+        python_entry_candidates=["app.py", "demo.py", "inference.py", "src/demo_package/__main__.py"],
         notebook_paths=[],
-        keywords={"torch", "trainer"},
-        parsed_dependency_hints={"requires_python": ">=3.10"},
+        keywords={"fastapi"},
+        parsed_dependency_hints={},
     )
-    profile = ProjectProfile(
-        project_type="deep_learning",
-        confidence=0.92,
-        needs_pytorch=True,
-        recommended_env_manager="conda",
-        editable_install_recommended=True,
-    )
-    python_requirement = PythonRequirement(
-        version="3.10",
-        source="pyproject_toml",
-        rationale="Project metadata requires Python 3.10+.",
-    )
-    device_info = DeviceInfo(
-        accelerator_type="nvidia",
-        gpu_name="RTX 4090",
-        cuda_driver_version="550.54",
-        cuda_runtime_version="12.4",
-        nvidia_smi_available=True,
-    )
-    pytorch_strategy = PyTorchStrategy(
-        required=True,
-        install_separately=True,
-        variant="cuda",
-        index_url="https://download.pytorch.org/whl/cu124",
-        packages=["torch", "torchvision"],
-        stripped_requirements_path=tmp_path / "requirements.no_torch.txt",
-        rationale="Use CUDA wheels before general dependencies.",
-    )
-    mirror_config = MirrorConfig(
-        enabled=True,
-        provider="tuna",
-        pip_index_url="https://pypi.tuna.tsinghua.edu.cn/simple",
-        conda_channels=["defaults"],
-    )
-    actions = [
-        InstallAction(
-            action_id="create-env",
-            kind="create_env",
-            command=["conda", "create", "-n", "example-env", "python=3.10"],
-            cwd=tmp_path,
-            env_overrides={"PIP_DISABLE_PIP_VERSION_CHECK": "1"},
-            risk_level="low",
-            description="Create the environment.",
-        )
+
+    candidates = discover_run_candidates(scan)
+
+    assert candidates == [
+        "uvicorn app:app --reload",
+        "python -m demo_package",
+        "python app.py",
+        "python demo.py",
+        "python inference.py",
     ]
+
+
+def test_discover_run_candidates_skips_invalid_module_paths() -> None:
+    project_root = Path("/tmp/demo-project")
+    scan = ProjectScanResult(
+        root=project_root,
+        detected_files=[],
+        dependency_files=[],
+        readme_path=None,
+        python_entry_candidates=["src/demo-package/server/__main__.py"],
+        notebook_paths=[],
+        keywords=set(),
+        parsed_dependency_hints={},
+    )
+
+    candidates = discover_run_candidates(scan)
+
+    assert candidates == []
+
+
+def test_generate_final_report_writes_expected_artifacts(tmp_path: Path) -> None:
+    project_root = tmp_path / "example-project"
+    project_root.mkdir()
+    readme_path = project_root / "README.md"
+    readme_path.write_text("# Example\n", encoding="utf-8")
     plan = InstallPlan(
-        source_result=source_result,
-        system_info=system_info,
-        project_scan=project_scan,
-        project_profile=profile,
-        python_requirement=python_requirement,
-        env_manager="conda",
-        env_name="example-env",
-        device_info=device_info,
-        pytorch_strategy=pytorch_strategy,
-        mirror_config=mirror_config,
+        source_result=SourceResolutionResult(
+            source=SourceSpec(
+                raw=str(project_root),
+                source_type="local_path",
+                normalized=str(project_root),
+            ),
+            local_project_path=project_root,
+            clone_performed=False,
+        ),
+        system_info=SystemInfo(
+            os_name="linux",
+            arch="x86_64",
+            is_apple_silicon=False,
+            has_conda=True,
+            has_git=True,
+            python_executables=["python3"],
+        ),
+        project_scan=ProjectScanResult(
+            root=project_root,
+            detected_files=[readme_path, project_root / "app.py"],
+            dependency_files=[],
+            readme_path=readme_path,
+            python_entry_candidates=["app.py"],
+            notebook_paths=[],
+            keywords={"fastapi"},
+            parsed_dependency_hints={},
+        ),
+        project_profile=ProjectProfile(
+            project_type="web",
+            confidence=0.85,
+            needs_pytorch=False,
+            recommended_env_manager="venv",
+            editable_install_recommended=False,
+        ),
+        python_requirement=PythonRequirement(
+            version="3.11",
+            source="default",
+            rationale="Default selection.",
+        ),
+        env_manager="venv",
+        env_name="example-project-env",
+        device_info=DeviceInfo(
+            accelerator_type="cpu",
+            gpu_name=None,
+            cuda_driver_version=None,
+            cuda_runtime_version=None,
+            nvidia_smi_available=False,
+        ),
+        pytorch_strategy=PyTorchStrategy(
+            required=False,
+            install_separately=False,
+            variant="none",
+            index_url=None,
+            packages=[],
+            stripped_requirements_path=None,
+            rationale="Not required.",
+        ),
+        mirror_config=MirrorConfig(
+            enabled=False,
+            provider="none",
+            pip_index_url=None,
+            conda_channels=[],
+        ),
         safety_level=2,
-        actions=actions,
-        warnings=["Mirror use is enabled."],
-        assumptions=["The repository already exists locally."],
+        actions=[
+            InstallAction(
+                action_id="create-environment",
+                kind="create_env",
+                command=["python3", "-m", "venv", ".venv"],
+                cwd=project_root,
+                env_overrides={},
+                risk_level="low",
+                description="Create the virtual environment.",
+            )
+        ],
+        warnings=["Use a dedicated virtual environment."],
+        assumptions=["The project source is already present."],
+    )
+    validation = ValidationReport(
+        passed=False,
+        checks_run=["environment-planned", "asset-scan"],
+        failures=["Missing weights/model.pt"],
+        warnings=["Run candidates are heuristic only."],
     )
 
-    serialized = dataclass_to_dict(plan)
+    report = generate_final_report(
+        base_dir=tmp_path,
+        plan=plan,
+        validation=validation,
+        run_candidates=["python app.py"],
+        missing_assets=["weights/model.pt :: Download from project README"],
+        error_summary_lines=["Missing weights/model.pt"],
+        agent_trace_lines=["scan_project", "discover_run_candidates", "generate_final_report"],
+    )
 
-    assert serialized["source_result"]["source"]["source_type"] == "local_path"
-    assert serialized["project_profile"]["project_type"] == "deep_learning"
-    assert serialized["pytorch_strategy"]["variant"] == "cuda"
-    assert serialized["actions"][0]["command"][0] == "conda"
-    assert serialized["project_scan"]["detected_files"] == [
-        str(tmp_path / "example-project" / "pyproject.toml")
+    artifact_dir = tmp_path / ".env_setup_logs"
+    expected_files = {
+        "detected_config.json",
+        "install_plan.json",
+        "error_summary.txt",
+        "run_candidates.txt",
+        "missing_assets.txt",
+        "final_report.txt",
+        "agent_trace_summary.txt",
+    }
+
+    assert isinstance(report, FinalReport)
+    assert {path.name for path in artifact_dir.iterdir()} == expected_files
+    detected_config = json.loads((artifact_dir / "detected_config.json").read_text(encoding="utf-8"))
+    assert detected_config == {
+        "source_type": "local_path",
+        "source": str(project_root),
+        "local_project_path": str(project_root),
+        "os": "linux",
+        "arch": "x86_64",
+        "project_type": "web",
+        "env_manager": "venv",
+        "env_name": "example-project-env",
+        "python_version": "3.11",
+        "has_nvidia_gpu": False,
+        "device_strategy": "cpu",
+        "needs_pytorch": False,
+        "pytorch_install_type": "none",
+        "use_china_mirror": False,
+        "mirror": "none",
+        "safety_level": 2,
+        "validation_status": "failed",
+        "run_candidate_count": 1,
+        "run_candidates": ["python app.py"],
+        "missing_asset_count": 1,
+        "missing_assets": ["weights/model.pt :: Download from project README"],
+    }
+    assert json.loads((artifact_dir / "install_plan.json").read_text(encoding="utf-8"))["env_name"] == "example-project-env"
+    assert (artifact_dir / "error_summary.txt").read_text(encoding="utf-8").splitlines() == [
+        "Missing weights/model.pt"
     ]
-    assert sorted(serialized["project_scan"]["keywords"]) == ["torch", "trainer"]
+    assert (artifact_dir / "run_candidates.txt").read_text(encoding="utf-8").splitlines() == [
+        "python app.py"
+    ]
+    assert (artifact_dir / "missing_assets.txt").read_text(encoding="utf-8").splitlines() == [
+        "weights/model.pt :: Download from project README"
+    ]
+    final_report_text = (artifact_dir / "final_report.txt").read_text(encoding="utf-8")
+    assert "Status: attention_needed" in final_report_text
+    assert f"Source: {project_root}" in final_report_text
+    assert f"Local path: {project_root}" in final_report_text
+    assert "Environment manager: venv" in final_report_text
+    assert "Python version: 3.11" in final_report_text
+    assert "Device strategy: cpu" in final_report_text
+    assert "PyTorch: none" in final_report_text
+    assert "Validation: failed" in final_report_text
+    assert "Run candidates:" in final_report_text
+    assert "Missing assets:" in final_report_text
+    assert "Warnings:" in final_report_text
+    assert "Activate and run:" in final_report_text
+    assert "- source .venv/bin/activate" in final_report_text
+    assert "- python app.py" in final_report_text
+    assert "- Use a dedicated virtual environment." in final_report_text
+    assert "- Run candidates are heuristic only." in final_report_text
+    assert (
+        artifact_dir / "agent_trace_summary.txt"
+    ).read_text(encoding="utf-8").splitlines() == [
+        "scan_project",
+        "discover_run_candidates",
+        "generate_final_report",
+    ]
 
 
-def test_dataclass_to_dict_handles_mixed_set_values_without_sorting() -> None:
-    serialized = dataclass_to_dict({"items": {"alpha", 2}})
+def test_generate_final_report_includes_conda_activation_and_run_hint(tmp_path: Path) -> None:
+    project_root = tmp_path / "example-project"
+    project_root.mkdir()
+    plan = InstallPlan(
+        source_result=SourceResolutionResult(
+            source=SourceSpec(
+                raw="https://github.com/example/project",
+                source_type="git_url",
+                normalized="https://github.com/example/project",
+            ),
+            local_project_path=project_root,
+            clone_performed=False,
+            repo_url="https://github.com/example/project",
+        ),
+        system_info=SystemInfo(
+            os_name="windows",
+            arch="x86_64",
+            is_apple_silicon=False,
+            has_conda=True,
+            has_git=True,
+            python_executables=["python"],
+        ),
+        project_scan=ProjectScanResult(
+            root=project_root,
+            detected_files=[],
+            dependency_files=[],
+            readme_path=None,
+            python_entry_candidates=[],
+            notebook_paths=[],
+            keywords=set(),
+            parsed_dependency_hints={},
+        ),
+        project_profile=ProjectProfile(
+            project_type="web",
+            confidence=0.8,
+            needs_pytorch=False,
+            recommended_env_manager="conda",
+            editable_install_recommended=False,
+        ),
+        python_requirement=PythonRequirement(
+            version="3.10",
+            source="default",
+            rationale="Default selection.",
+        ),
+        env_manager="conda",
+        env_name="demo-env",
+        device_info=DeviceInfo(
+            accelerator_type="cpu",
+            gpu_name=None,
+            cuda_driver_version=None,
+            cuda_runtime_version=None,
+            nvidia_smi_available=False,
+        ),
+        pytorch_strategy=PyTorchStrategy(
+            required=False,
+            install_separately=False,
+            variant="none",
+            index_url=None,
+            packages=[],
+            stripped_requirements_path=None,
+            rationale="Not required.",
+        ),
+        mirror_config=MirrorConfig(
+            enabled=False,
+            provider="none",
+            pip_index_url=None,
+            conda_channels=[],
+        ),
+        safety_level=2,
+        actions=[],
+        warnings=[],
+        assumptions=[],
+    )
+    validation = ValidationReport(
+        passed=True,
+        checks_run=["python --version"],
+        failures=[],
+        warnings=[],
+    )
 
-    assert set(serialized["items"]) == {"alpha", 2}
+    generate_final_report(
+        base_dir=tmp_path,
+        plan=plan,
+        validation=validation,
+        run_candidates=["python app.py"],
+        missing_assets=[],
+    )
 
+    final_report_text = (tmp_path / ".env_setup_logs" / "final_report.txt").read_text(encoding="utf-8")
 
-def test_logger_helpers_create_and_append_artifacts(tmp_path: Path) -> None:
-    log_dir = ensure_log_dir(tmp_path)
-    command_log = artifact_path(tmp_path, "commands.log")
-
-    append_command_log_line(command_log, "python -m pip install -r requirements.txt")
-
-    assert log_dir == tmp_path / ".env_setup_logs"
-    assert command_log == log_dir / "commands.log"
-    assert command_log.exists()
-
-    lines = command_log.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == 1
-    assert "python -m pip install -r requirements.txt" in lines[0]
+    assert "Activate and run:" in final_report_text
+    assert "- conda activate demo-env" in final_report_text
+    assert "- python app.py" in final_report_text
