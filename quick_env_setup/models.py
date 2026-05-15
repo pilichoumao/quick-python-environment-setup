@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -213,6 +213,7 @@ class ValidationReport:
     passed: bool
     checks_run: list[str]
     failures: list[str]
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
