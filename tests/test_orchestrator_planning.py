@@ -200,12 +200,30 @@ def test_cli_returns_nonzero_when_execution_or_validation_fails(
     tmp_path: Path,
 ) -> None:
     fixture_root = (FIXTURES / "web_project").resolve()
+    artifact_dir = tmp_path / ".env_setup_logs"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    error_summary_path = artifact_dir / "error_summary.txt"
+    error_summary_path.write_text(
+        "\n".join(
+            [
+                "Category: network_failure",
+                "Summary: Dependency download failed because the package index or network path was unavailable.",
+                "Why this likely happened: The installer could not reliably reach the package index, mirror, proxy, or certificate chain needed to download dependencies.",
+                "Evidence:",
+                "- ERROR: Could not fetch URL https://pypi.org/simple/demo/",
+                "Recommended next steps:",
+                "- Retry the install after confirming the package index is reachable from this machine.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     workflow_result = InstallWorkflowResult(
         plan=_make_cli_plan(fixture_root),
         execution_succeeded=False,
         validation_passed=False,
-        artifact_dir=tmp_path / ".env_setup_logs",
-        artifact_paths={"error_summary.txt": tmp_path / ".env_setup_logs" / "error_summary.txt"},
+        artifact_dir=artifact_dir,
+        artifact_paths={"error_summary.txt": error_summary_path},
         completed_action_ids=["check-python"],
         failed_action_id="install-dependencies",
         run_candidates=[],
@@ -221,7 +239,11 @@ def test_cli_returns_nonzero_when_execution_or_validation_fails(
 
     captured = capsys.readouterr()
     assert exit_code == 1
+    assert "Failure summary" in captured.out
     assert "install-dependencies" in captured.out
+    assert "network_failure" in captured.out
+    assert "Dependency download failed because the package index or network path was unavailable." in captured.out
+    assert str(error_summary_path) in captured.out
     assert "Dependency installation failed." in captured.out
 
 

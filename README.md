@@ -161,6 +161,13 @@ Current report set includes:
 - `final_report.txt`
 - `agent_trace_summary.txt`
 
+When setup fails, the CLI now prints a short failure summary before the full execution summary. That summary includes:
+
+- the failed action
+- the detected failure category when available
+- a one-line explanation from `error_summary.txt`
+- the exact `error_summary.txt` path to inspect next
+
 ## Development
 
 Run the full test suite:

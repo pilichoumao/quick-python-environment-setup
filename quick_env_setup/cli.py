@@ -80,6 +80,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     workflow_result = execute_install_plan(plan)
+    if not workflow_result.succeeded:
+        print(render_failure_summary(workflow_result))
     print(render_execution_summary(workflow_result))
     return 0 if workflow_result.succeeded else 1
 
@@ -115,4 +117,35 @@ def render_plan_summary(plan: object) -> str:
         lines.append("  assumptions:")
         lines.extend(f"    - {assumption}" for assumption in plan.assumptions)
 
+    return "\n".join(lines)
+
+
+def render_failure_summary(workflow_result: object) -> str:
+    from quick_env_setup.utils import InstallWorkflowResult
+
+    if not isinstance(workflow_result, InstallWorkflowResult):
+        raise TypeError("render_failure_summary expects an InstallWorkflowResult")
+
+    category = ""
+    summary = ""
+    error_summary_path = workflow_result.artifact_paths.get("error_summary.txt")
+    if error_summary_path is not None and error_summary_path.exists():
+        for line in error_summary_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Category: "):
+                category = line.removeprefix("Category: ").strip()
+            elif line.startswith("Summary: "):
+                summary = line.removeprefix("Summary: ").strip()
+            if category and summary:
+                break
+
+    lines = ["Failure summary"]
+    if workflow_result.failed_action_id is not None:
+        lines.append(f"  failed action: {workflow_result.failed_action_id}")
+    if category:
+        lines.append(f"  category: {category}")
+    if summary:
+        lines.append(f"  summary: {summary}")
+    if error_summary_path is not None:
+        lines.append(f"  error summary: {error_summary_path}")
+    lines.append(f"  artifact dir: {workflow_result.artifact_dir}")
     return "\n".join(lines)

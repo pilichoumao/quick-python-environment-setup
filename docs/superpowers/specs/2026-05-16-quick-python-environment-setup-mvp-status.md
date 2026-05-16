@@ -56,13 +56,13 @@ These requirements have a real implementation, but the current version is intent
 - PyTorch strategy:
   handles the main CPU / CUDA / MPS branches, but does not try to be omniscient
 - conflict diagnosis:
-  catches common classes of failures, not every resolver or native-build edge case
+  now classifies common classes of failures, carries device / mirror / Python-plan context into recovery guidance, and emits structured failure artifacts, but still does not cover every resolver or native-build edge case
 - asset detection:
   useful for common weights/config/data/.env patterns, still heuristic
 - run candidate discovery:
   prioritizes README and known entrypoint filenames, but does not deeply understand every framework
 - report generation:
-  good enough for MVP inspection and agent use, still open to formatting and narrative improvement
+  now includes stronger failure artifacts and CLI failure summaries, but still has room for narrative polish and broader scenario coverage
 - venv launcher selection:
   now falls back more gracefully to detected Python executables, but can still be made smarter across more environments
 
