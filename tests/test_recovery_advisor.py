@@ -78,3 +78,18 @@ def test_build_recovery_guidance_adds_scenario_specific_recommendations(
     for hint in required_hints:
         assert hint in joined_recommendations
     assert forbidden_hint not in joined_recommendations
+
+
+def test_build_recovery_guidance_does_not_recommend_retrying_with_requested_failing_python() -> None:
+    report = analyze_install_error(
+        stderr=(
+            "ERROR: Ignored the following versions that require a different python version: "
+            "2.0.0 Requires-Python >=3.11\n"
+            "The user requested Python 3.10.14, but demo-package 2.1.0 requires Python >=3.11.\n"
+        )
+    )
+
+    enriched = build_recovery_guidance(report)
+
+    joined_recommendations = "\n".join(enriched.recommendations)
+    assert "Python 3.10" not in joined_recommendations

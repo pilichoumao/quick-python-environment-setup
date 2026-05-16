@@ -278,6 +278,19 @@ def test_analyze_install_error_extracts_python_hints_from_wheel_tags_without_hel
     assert report.suggested_python_versions == ["3.8", "3.9", "3.10"]
 
 
+def test_analyze_install_error_does_not_treat_requested_python_as_compatible_candidate() -> None:
+    report = analyze_install_error(
+        stderr=(
+            "ERROR: Ignored the following versions that require a different python version: "
+            "2.0.0 Requires-Python >=3.11\n"
+            "The user requested Python 3.10.14, but demo-package 2.1.0 requires Python >=3.11.\n"
+        )
+    )
+
+    assert report.category == "python_version_incompatible"
+    assert report.suggested_python_versions == []
+
+
 def test_analyze_install_error_keeps_dns_and_ssl_tags_distinct() -> None:
     dns_report = analyze_install_error(stderr=_read_error_log("network_dns_failure.txt"))
     ssl_report = analyze_install_error(stderr=_read_error_log("network_ssl_failure.txt"))

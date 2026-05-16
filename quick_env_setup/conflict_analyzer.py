@@ -194,6 +194,8 @@ def _extract_python_version_hints(text: str) -> list[str]:
 
     for line in [*preferred_lines, *fallback_lines]:
         for pattern in _PYTHON_CANDIDATE_PATTERNS:
+            if pattern.pattern.startswith("Python") and _is_current_python_context(line):
+                continue
             for match in pattern.finditer(line):
                 version = _normalize_python_version_match(match)
                 if version is not None:
@@ -253,6 +255,15 @@ def _normalize_python_version_match(match: re.Match[str]) -> str | None:
     if len(match.groups()) == 2:
         return f"{match.group(1)}.{match.group(2)}"
     return None
+
+
+def _is_current_python_context(line: str) -> bool:
+    lower_line = line.lower()
+    return (
+        "requested python" in lower_line
+        or "current python" in lower_line
+        or "requires a different python" in lower_line
+    )
 
 
 def _non_empty_lines(text: str) -> list[str]:
