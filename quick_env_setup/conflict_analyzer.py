@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 
 from quick_env_setup.models import ConflictCategory, ConflictReport
-from quick_env_setup.recovery_advisor import build_recovery_guidance
 
 
 _CATEGORY_SPECS: tuple[dict[str, object], ...] = (
@@ -124,7 +123,7 @@ def analyze_install_error(
         related_packages=_extract_related_packages(combined),
         suggested_python_versions=_extract_python_version_hints(combined),
     )
-    return build_recovery_guidance(report)
+    return report
 
 
 def analyze_conflict(

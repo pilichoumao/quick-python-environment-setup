@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from quick_env_setup.conflict_analyzer import analyze_install_error, render_conflict_report
+from quick_env_setup.recovery_advisor import build_recovery_guidance
 from quick_env_setup.dependency_installer import execute_install_plan
 from quick_env_setup.models import (
     ConflictReport,
@@ -65,7 +66,7 @@ def test_conflict_report_keeps_existing_callers_compatible_with_optional_default
     assert report.category == "network_failure"
     assert report.summary
     assert report.evidence
-    assert report.recommendations
+    assert report.recommendations == []
     assert report.confidence > 0.0
     assert "network" in report.recovery_tags
     assert report.related_packages == []
@@ -143,7 +144,7 @@ def test_analyze_install_error_classifies_representative_failures(
     assert report.summary
     assert report.evidence
     assert expected_evidence in report.evidence[0]
-    assert report.recommendations
+    assert report.recommendations == []
 
 
 def test_analyze_install_error_does_not_misclassify_generic_version_conflict_as_python_issue() -> None:
@@ -241,15 +242,18 @@ def test_analyze_install_error_extracts_structured_metadata_from_log_fixtures(
     assert report.category == expected_category
     assert report.confidence > 0.0
     assert report.evidence
+    assert report.recommendations == []
     assert report.related_packages == expected_packages
     assert report.suggested_python_versions == expected_python_versions
 
 
 def test_render_conflict_report_formats_summary_evidence_and_next_steps() -> None:
-    report = analyze_install_error(
+    report = build_recovery_guidance(
+        analyze_install_error(
         stderr=(
             "ERROR: Could not fetch URL https://pypi.org/simple/numpy/: "
             "There was a problem confirming the ssl certificate\n"
+        )
         )
     )
 
@@ -259,6 +263,15 @@ def test_render_conflict_report_formats_summary_evidence_and_next_steps() -> Non
     assert lines[1].startswith("Summary: ")
     assert "Evidence:" in lines
     assert "Recommended next steps:" in lines
+
+
+def test_analyze_install_error_keeps_dns_and_ssl_tags_distinct() -> None:
+    dns_report = analyze_install_error(stderr=_read_error_log("network_dns_failure.txt"))
+    ssl_report = analyze_install_error(stderr=_read_error_log("network_ssl_failure.txt"))
+
+    assert "dns" in dns_report.recovery_tags
+    assert "ssl" not in dns_report.recovery_tags
+    assert "ssl" in ssl_report.recovery_tags
 
 
 def test_execute_install_plan_stops_on_first_failure_and_persists_structured_log(

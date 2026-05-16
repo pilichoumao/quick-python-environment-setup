@@ -69,6 +69,7 @@ def test_build_recovery_guidance_adds_scenario_specific_recommendations(
     forbidden_hint: str,
 ) -> None:
     report = analyze_install_error(stderr=_read_error_log(fixture_name))
+    assert report.recommendations == []
 
     enriched = build_recovery_guidance(report)
 
