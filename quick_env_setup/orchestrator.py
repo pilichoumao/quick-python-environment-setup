@@ -3,8 +3,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from quick_env_setup.asset_detector import detect_missing_assets
+from quick_env_setup.conflict_analyzer import analyze_install_error
+from quick_env_setup.dependency_installer import execute_install_plan as execute_action_plan
 from quick_env_setup.env_manager import EnvironmentTarget, get_env_manager
 from quick_env_setup.git_handler import build_clone_command, select_clone_target_path
+from quick_env_setup.logger import artifact_path, ensure_log_dir
 from quick_env_setup.mirror_manager import get_mirror_config
 from quick_env_setup.models import (
     EnvManager,
@@ -19,6 +23,8 @@ from quick_env_setup.project_type_detector import detect_project_profile
 from quick_env_setup.python_version_resolver import resolve_python_requirement
 from quick_env_setup.device_detector import resolve_device_info
 from quick_env_setup.pytorch_resolver import resolve_pytorch_strategy
+from quick_env_setup.report_generator import generate_final_report
+from quick_env_setup.run_command_discoverer import discover_run_candidates
 from quick_env_setup.safety_policy import (
     apply_safety_policy,
     risk_level_for_action_kind,
@@ -26,6 +32,8 @@ from quick_env_setup.safety_policy import (
 )
 from quick_env_setup.source_resolver import parse_source_spec
 from quick_env_setup.system_detector import detect_system_info
+from quick_env_setup.utils import InstallWorkflowResult
+from quick_env_setup.validator import validate_environment
 
 
 def build_install_plan(
@@ -118,10 +126,93 @@ def build_install_plan(
     )
 
 
-def execute_install_plan(plan: InstallPlan) -> None:
-    raise NotImplementedError(
-        "Install execution is not implemented yet; use --dry-run to inspect the plan."
+def execute_install_plan(plan: InstallPlan) -> InstallWorkflowResult:
+    base_dir = _artifact_base_dir(plan)
+    artifact_dir = ensure_log_dir(base_dir)
+    execution_result = execute_action_plan(plan)
+
+    if not execution_result.success:
+        conflict_report = analyze_install_error(
+            stdout=execution_result.stdout_tail,
+            stderr=execution_result.stderr_tail,
+        )
+        error_summary_lines = [conflict_report.summary, *conflict_report.evidence, *conflict_report.recommendations]
+        error_summary_path = artifact_path(base_dir, "error_summary.txt")
+        error_summary_path.write_text("".join(f"{line}\n" for line in error_summary_lines), encoding="utf-8")
+        return InstallWorkflowResult(
+            plan=plan,
+            execution_succeeded=False,
+            validation_passed=False,
+            artifact_dir=artifact_dir,
+            artifact_paths={
+                "commands.log": execution_result.log_path,
+                "error_summary.txt": error_summary_path,
+            },
+            completed_action_ids=execution_result.completed_action_ids,
+            failed_action_id=execution_result.failed_action_id,
+            run_candidates=[],
+            missing_assets=[],
+            warnings=[conflict_report.summary],
+        )
+
+    validation = validate_environment(plan)
+    run_candidates = discover_run_candidates(plan.project_scan)
+    missing_asset_items = detect_missing_assets(plan.project_scan)
+    missing_assets = [_format_missing_asset(item) for item in missing_asset_items]
+    final_report = generate_final_report(
+        base_dir=base_dir,
+        plan=plan,
+        validation=validation,
+        run_candidates=run_candidates,
+        missing_assets=missing_assets,
+        error_summary_lines=validation.failures,
+        agent_trace_lines=[
+            "build_install_plan",
+            "execute_install_plan",
+            "validate_environment",
+            "discover_run_candidates",
+            "detect_missing_assets",
+            "generate_final_report",
+        ],
     )
+    artifact_paths = {
+        "commands.log": execution_result.log_path,
+        "detected_config.json": artifact_path(base_dir, "detected_config.json"),
+        "install_plan.json": artifact_path(base_dir, "install_plan.json"),
+        "error_summary.txt": artifact_path(base_dir, "error_summary.txt"),
+        "run_candidates.txt": artifact_path(base_dir, "run_candidates.txt"),
+        "missing_assets.txt": artifact_path(base_dir, "missing_assets.txt"),
+        "final_report.txt": artifact_path(base_dir, "final_report.txt"),
+        "agent_trace_summary.txt": artifact_path(base_dir, "agent_trace_summary.txt"),
+    }
+    return InstallWorkflowResult(
+        plan=plan,
+        execution_succeeded=True,
+        validation_passed=validation.passed,
+        artifact_dir=artifact_dir,
+        artifact_paths=artifact_paths,
+        completed_action_ids=execution_result.completed_action_ids,
+        failed_action_id=None,
+        run_candidates=run_candidates,
+        missing_assets=missing_assets,
+        warnings=[*plan.warnings, *validation.warnings, *final_report.warnings],
+    )
+
+
+def _artifact_base_dir(plan: InstallPlan) -> Path:
+    project_root = plan.source_result.local_project_path
+    if plan.source_result.source.source_type == "git_url" and not project_root.exists():
+        return project_root.parent
+    return project_root
+
+
+def _format_missing_asset(item: object) -> str:
+    category = getattr(item, "category", "asset")
+    asset_path = getattr(item, "asset_path", "")
+    hints = list(getattr(item, "download_hints", []))
+    if hints:
+        return f"{category}: {asset_path} :: {hints[0]}"
+    return f"{category}: {asset_path}"
 
 
 def _resolve_source(*, source: str, clone_dir: str | None) -> SourceResolutionResult:

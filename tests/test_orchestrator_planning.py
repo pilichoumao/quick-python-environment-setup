@@ -6,6 +6,7 @@ import pytest
 
 from quick_env_setup import cli
 from quick_env_setup.models import InstallAction, InstallPlan
+from quick_env_setup.utils import InstallWorkflowResult
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -122,6 +123,106 @@ def test_dry_run_does_not_execute_actions(monkeypatch: pytest.MonkeyPatch, capsy
     assert exit_code == 0
     assert "Plan summary" in captured.out
     assert "check-python" in captured.out
+
+
+def test_cli_default_level_is_2_and_dry_run_prints_plan_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fixture_root = (FIXTURES / "web_project").resolve()
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_build_install_plan(**kwargs: object) -> InstallPlan:
+        captured_kwargs.update(kwargs)
+        return _make_cli_plan(fixture_root)
+
+    monkeypatch.setattr("quick_env_setup.cli.build_install_plan", fake_build_install_plan)
+    monkeypatch.setattr(
+        "quick_env_setup.cli.execute_install_plan",
+        lambda plan: (_ for _ in ()).throw(AssertionError("execute_install_plan should not run")),
+    )
+
+    exit_code = cli.main(["--source", str(fixture_root), "--dry-run"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured_kwargs["safety_level"] == 2
+    assert "Plan summary" in captured.out
+    assert "safety level: 2" in captured.out
+
+
+def test_cli_yes_bypasses_low_risk_prompt_and_emits_artifact_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    fixture_root = (FIXTURES / "web_project").resolve()
+    artifact_dir = tmp_path / ".env_setup_logs"
+    prompt_calls: list[bool | None] = []
+
+    def fake_confirm(*, injected_response: bool | None = None) -> bool:
+        prompt_calls.append(injected_response)
+        return True
+
+    workflow_result = InstallWorkflowResult(
+        plan=_make_cli_plan(fixture_root),
+        execution_succeeded=True,
+        validation_passed=True,
+        artifact_dir=artifact_dir,
+        artifact_paths={
+            "commands.log": artifact_dir / "commands.log",
+            "final_report.txt": artifact_dir / "final_report.txt",
+        },
+        completed_action_ids=["check-python", "create-environment"],
+        failed_action_id=None,
+        run_candidates=["python app.py"],
+        missing_assets=[],
+        warnings=[],
+    )
+
+    monkeypatch.setattr("quick_env_setup.cli.build_install_plan", lambda **_: _make_cli_plan(fixture_root))
+    monkeypatch.setattr("quick_env_setup.cli.confirm_low_risk_execution", fake_confirm)
+    monkeypatch.setattr("quick_env_setup.cli.execute_install_plan", lambda plan: workflow_result)
+
+    exit_code = cli.main(["--source", str(fixture_root), "--yes"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert prompt_calls == [True]
+    assert "Execution summary" in captured.out
+    assert str(artifact_dir / "commands.log") in captured.out
+    assert str(artifact_dir / "final_report.txt") in captured.out
+
+
+def test_cli_returns_nonzero_when_execution_or_validation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    fixture_root = (FIXTURES / "web_project").resolve()
+    workflow_result = InstallWorkflowResult(
+        plan=_make_cli_plan(fixture_root),
+        execution_succeeded=False,
+        validation_passed=False,
+        artifact_dir=tmp_path / ".env_setup_logs",
+        artifact_paths={"error_summary.txt": tmp_path / ".env_setup_logs" / "error_summary.txt"},
+        completed_action_ids=["check-python"],
+        failed_action_id="install-dependencies",
+        run_candidates=[],
+        missing_assets=[],
+        warnings=["Dependency installation failed."],
+    )
+
+    monkeypatch.setattr("quick_env_setup.cli.build_install_plan", lambda **_: _make_cli_plan(fixture_root))
+    monkeypatch.setattr("quick_env_setup.cli.confirm_low_risk_execution", lambda **_: True)
+    monkeypatch.setattr("quick_env_setup.cli.execute_install_plan", lambda plan: workflow_result)
+
+    exit_code = cli.main(["--source", str(fixture_root), "--yes"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "install-dependencies" in captured.out
+    assert "Dependency installation failed." in captured.out
 
 
 def test_deep_learning_fixture_defaults_to_conda() -> None:
@@ -288,6 +389,215 @@ def test_pytorch_install_is_not_split_when_strategy_disables_it(monkeypatch: pyt
     assert all(action.kind != "install_pytorch" for action in plan.actions)
 
 
+def test_execute_install_plan_uses_consistent_artifact_dir_for_remote_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from quick_env_setup.models import (
+        DeviceInfo,
+        ExecutionResult,
+        MirrorConfig,
+        ProjectProfile,
+        ProjectScanResult,
+        PyTorchStrategy,
+        PythonRequirement,
+        SourceResolutionResult,
+        SourceSpec,
+        SystemInfo,
+        ValidationReport,
+    )
+    from quick_env_setup.orchestrator import execute_install_plan
+
+    clone_target = tmp_path / "cloned-project"
+    clone_target.mkdir()
+    plan = InstallPlan(
+        source_result=SourceResolutionResult(
+            source=SourceSpec(
+                raw="https://github.com/example/project.git",
+                source_type="git_url",
+                normalized="https://github.com/example/project.git",
+            ),
+            local_project_path=clone_target,
+            clone_performed=False,
+            repo_url="https://github.com/example/project.git",
+        ),
+        system_info=SystemInfo(
+            os_name="linux",
+            arch="x86_64",
+            is_apple_silicon=False,
+            has_conda=True,
+            has_git=True,
+            python_executables=["python3"],
+        ),
+        project_scan=ProjectScanResult(
+            root=clone_target,
+            detected_files=[],
+            dependency_files=[],
+            readme_path=None,
+            python_entry_candidates=[],
+            notebook_paths=[],
+            keywords=set(),
+            parsed_dependency_hints={},
+        ),
+        project_profile=ProjectProfile(
+            project_type="web",
+            confidence=0.8,
+            needs_pytorch=False,
+            recommended_env_manager="venv",
+            editable_install_recommended=False,
+        ),
+        python_requirement=PythonRequirement(
+            version="3.10",
+            source="default",
+            rationale="default",
+        ),
+        env_manager="venv",
+        env_name="cloned-project-env",
+        device_info=DeviceInfo(
+            accelerator_type="cpu",
+            gpu_name=None,
+            cuda_driver_version=None,
+            cuda_runtime_version=None,
+            nvidia_smi_available=False,
+        ),
+        pytorch_strategy=PyTorchStrategy(
+            required=False,
+            install_separately=False,
+            variant="none",
+            index_url=None,
+            packages=[],
+            stripped_requirements_path=None,
+            rationale="not needed",
+        ),
+        mirror_config=MirrorConfig(
+            enabled=False,
+            provider="none",
+            pip_index_url=None,
+            conda_channels=[],
+        ),
+        safety_level=2,
+        actions=[],
+        warnings=[],
+        assumptions=[],
+    )
+
+    artifact_dir = clone_target / ".env_setup_logs"
+    commands_log = artifact_dir / "commands.log"
+    commands_log.parent.mkdir(parents=True, exist_ok=True)
+    commands_log.write_text("command log\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "quick_env_setup.orchestrator.execute_action_plan",
+        lambda plan: ExecutionResult(
+            success=True,
+            completed_action_ids=[],
+            failed_action_id=None,
+            exit_code=0,
+            log_path=commands_log,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+    )
+    monkeypatch.setattr(
+        "quick_env_setup.orchestrator.validate_environment",
+        lambda plan: ValidationReport(passed=True, checks_run=["python --version"], failures=[], warnings=[]),
+    )
+    monkeypatch.setattr("quick_env_setup.orchestrator.discover_run_candidates", lambda scan: ["python app.py"])
+    monkeypatch.setattr("quick_env_setup.orchestrator.detect_missing_assets", lambda scan: [])
+
+    result = execute_install_plan(plan)
+
+    assert result.artifact_dir == artifact_dir
+    assert all(path.parent == artifact_dir for path in result.artifact_paths.values())
+
+
+def _make_cli_plan(fixture_root: Path) -> InstallPlan:
+    from quick_env_setup.models import MirrorConfig
+    from quick_env_setup.models import ProjectProfile, ProjectScanResult, PyTorchStrategy
+    from quick_env_setup.models import PythonRequirement, SourceResolutionResult, SourceSpec
+    from quick_env_setup.models import SystemInfo, DeviceInfo
+
+    return InstallPlan(
+        source_result=SourceResolutionResult(
+            source=SourceSpec(
+                raw=str(fixture_root),
+                source_type="local_path",
+                normalized=str(fixture_root),
+            ),
+            local_project_path=fixture_root,
+            clone_performed=False,
+        ),
+        system_info=SystemInfo(
+            os_name="linux",
+            arch="x86_64",
+            is_apple_silicon=False,
+            has_conda=True,
+            has_git=True,
+            python_executables=["python3"],
+        ),
+        project_scan=ProjectScanResult(
+            root=fixture_root,
+            detected_files=[],
+            dependency_files=[],
+            readme_path=None,
+            python_entry_candidates=[],
+            notebook_paths=[],
+            keywords=set(),
+            parsed_dependency_hints={},
+        ),
+        project_profile=ProjectProfile(
+            project_type="web",
+            confidence=0.8,
+            needs_pytorch=False,
+            recommended_env_manager="venv",
+            editable_install_recommended=False,
+        ),
+        python_requirement=PythonRequirement(
+            version="3.10",
+            source="default",
+            rationale="default",
+        ),
+        env_manager="venv",
+        env_name="web-project-env",
+        device_info=DeviceInfo(
+            accelerator_type="cpu",
+            gpu_name=None,
+            cuda_driver_version=None,
+            cuda_runtime_version=None,
+            nvidia_smi_available=False,
+        ),
+        pytorch_strategy=PyTorchStrategy(
+            required=False,
+            install_separately=False,
+            variant="none",
+            index_url=None,
+            packages=[],
+            stripped_requirements_path=None,
+            rationale="not needed",
+        ),
+        mirror_config=MirrorConfig(
+            enabled=False,
+            provider="none",
+            pip_index_url=None,
+            conda_channels=[],
+        ),
+        safety_level=2,
+        actions=[
+            InstallAction(
+                action_id="check-python",
+                kind="check",
+                command=["python", "--version"],
+                cwd=fixture_root,
+                env_overrides={},
+                risk_level="low",
+                description="Check Python availability.",
+            )
+        ],
+        warnings=[],
+        assumptions=[],
+    )
+
+
 def test_use_china_mirror_without_provider_uses_conservative_default() -> None:
     from quick_env_setup.orchestrator import build_install_plan
 
@@ -308,3 +618,99 @@ def test_planner_action_risk_levels_come_from_safety_policy() -> None:
 
     for action in plan.actions:
         assert action.risk_level == risk_level_for_action_kind(action.kind)
+
+
+def _make_cli_plan(project_root: Path) -> InstallPlan:
+    from quick_env_setup.models import MirrorConfig
+    from quick_env_setup.models import ProjectProfile, ProjectScanResult, PyTorchStrategy
+    from quick_env_setup.models import PythonRequirement, SourceResolutionResult, SourceSpec
+    from quick_env_setup.models import SystemInfo, DeviceInfo
+
+    return InstallPlan(
+        source_result=SourceResolutionResult(
+            source=SourceSpec(
+                raw=str(project_root),
+                source_type="local_path",
+                normalized=str(project_root),
+            ),
+            local_project_path=project_root,
+            clone_performed=False,
+        ),
+        system_info=SystemInfo(
+            os_name="linux",
+            arch="x86_64",
+            is_apple_silicon=False,
+            has_conda=True,
+            has_git=True,
+            python_executables=["python3"],
+        ),
+        project_scan=ProjectScanResult(
+            root=project_root,
+            detected_files=[],
+            dependency_files=[],
+            readme_path=None,
+            python_entry_candidates=[],
+            notebook_paths=[],
+            keywords=set(),
+            parsed_dependency_hints={},
+        ),
+        project_profile=ProjectProfile(
+            project_type="web",
+            confidence=0.8,
+            needs_pytorch=False,
+            recommended_env_manager="venv",
+            editable_install_recommended=False,
+        ),
+        python_requirement=PythonRequirement(
+            version="3.10",
+            source="default",
+            rationale="default",
+        ),
+        env_manager="venv",
+        env_name="web-project-env",
+        device_info=DeviceInfo(
+            accelerator_type="cpu",
+            gpu_name=None,
+            cuda_driver_version=None,
+            cuda_runtime_version=None,
+            nvidia_smi_available=False,
+        ),
+        pytorch_strategy=PyTorchStrategy(
+            required=False,
+            install_separately=False,
+            variant="none",
+            index_url=None,
+            packages=[],
+            stripped_requirements_path=None,
+            rationale="not needed",
+        ),
+        mirror_config=MirrorConfig(
+            enabled=False,
+            provider="none",
+            pip_index_url=None,
+            conda_channels=[],
+        ),
+        safety_level=2,
+        actions=[
+            InstallAction(
+                action_id="check-python",
+                kind="check",
+                command=["python", "--version"],
+                cwd=project_root,
+                env_overrides={},
+                risk_level="low",
+                description="Check Python availability.",
+            ),
+            InstallAction(
+                action_id="create-environment",
+                kind="create_env",
+                command=["python", "-m", "venv", ".venv"],
+                cwd=project_root,
+                env_overrides={},
+                risk_level="medium",
+                description="Create the environment.",
+            ),
+        ],
+        warnings=[],
+        assumptions=[],
+    )

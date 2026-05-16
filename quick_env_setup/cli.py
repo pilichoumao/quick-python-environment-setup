@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 from typing import Sequence
 
+from quick_env_setup.interactive_prompt import confirm_low_risk_execution
 from quick_env_setup.orchestrator import build_install_plan, execute_install_plan
+from quick_env_setup.utils import render_execution_summary
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -31,6 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mirror provider to use when --use-china-mirror is enabled.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Render the install plan without executing it.")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the execution confirmation prompt.",
+    )
     parser.add_argument(
         "--level",
         type=int,
@@ -67,9 +75,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.dry_run:
         return 0
 
-    # Execution stays intentionally stubbed until the execution task lands.
-    execute_install_plan(plan)
-    return 0
+    if not confirm_low_risk_execution(injected_response=True if args.yes else None):
+        print("Execution cancelled before making environment changes.")
+        return 1
+
+    workflow_result = execute_install_plan(plan)
+    print(render_execution_summary(workflow_result))
+    return 0 if workflow_result.succeeded else 1
 
 
 def render_plan_summary(plan: object) -> str:
