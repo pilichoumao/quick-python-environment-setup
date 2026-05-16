@@ -252,9 +252,8 @@ def test_generate_final_report_writes_expected_artifacts(tmp_path: Path) -> None
     assert "Run candidates:" in final_report_text
     assert "Missing assets:" in final_report_text
     assert "Warnings:" in final_report_text
-    assert "Activate and run:" in final_report_text
-    assert "- source .venv/bin/activate" in final_report_text
-    assert "- python app.py" in final_report_text
+    assert "Activate and run:" not in final_report_text
+    assert "- source .venv/bin/activate" not in final_report_text
     assert "- Use a dedicated virtual environment." in final_report_text
     assert "- Run candidates are heuristic only." in final_report_text
     assert (
@@ -460,6 +459,7 @@ def test_generate_final_report_guides_failed_recovery_with_specific_artifacts(tm
     final_report_text = (tmp_path / ".env_setup_logs" / "final_report.txt").read_text(encoding="utf-8")
 
     assert "Validation: failed" in final_report_text
+    assert "Activate and run:" not in final_report_text
     assert "- Diagnose the install failure in error_summary.txt before retrying the setup." in final_report_text
     assert "- First recovery step: Install matching torch, torchvision, and torchaudio builds for the same CUDA runtime." in final_report_text
     assert "- Detected failure category: pytorch_cuda_mismatch." in final_report_text

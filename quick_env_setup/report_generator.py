@@ -234,6 +234,9 @@ def _merge_warnings(*warning_groups: list[str]) -> list[str]:
 
 
 def _activation_lines(report: FinalReport) -> list[str]:
+    if not report.validation.passed:
+        return []
+
     env_manager = report.overview["env_manager"]
     if env_manager == "conda":
         lines = [f"- conda activate {report.overview['env_name']}"]
