@@ -1,0 +1,5 @@
+ERROR: Ignored the following versions that require a different python version: 2.0.0 Requires-Python >=3.11; 2.1.0 Requires-Python >=3.11
+ERROR: Could not find a version that satisfies the requirement demo-package==2.1.0 (from versions: 1.8.0, 1.9.0)
+ERROR: No matching distribution found for demo-package==2.1.0
+The user requested Python 3.10.14, but demo-package 2.1.0 requires Python >=3.11.
+Consider Python 3.8 for demo-package 1.8.0 or Python 3.10 for demo-package 1.9.0.

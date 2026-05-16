@@ -1,0 +1,5 @@
+Looking in indexes: https://pypi.org/simple
+ERROR: Could not find a version that satisfies the requirement torch==2.4.0+cu121 (from versions: 2.2.2, 2.3.1)
+ERROR: No matching distribution found for torch==2.4.0+cu121
+pip debug shows supported tags for cp310-manylinux_x86_64 only.
+Try Python 3.10 on x86_64 Linux or use a wheel that matches the current platform tags.

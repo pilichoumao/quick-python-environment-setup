@@ -25,6 +25,13 @@ from quick_env_setup.models import (
 from quick_env_setup.validator import validate_environment
 
 
+ERROR_LOG_FIXTURES = Path(__file__).parent / "fixtures" / "error_logs"
+
+
+def _read_error_log(name: str) -> str:
+    return (ERROR_LOG_FIXTURES / name).read_text(encoding="utf-8")
+
+
 def test_conflict_report_supports_richer_diagnosis_metadata() -> None:
     report = ConflictReport(
         category="package_conflict",
@@ -59,8 +66,8 @@ def test_conflict_report_keeps_existing_callers_compatible_with_optional_default
     assert report.summary
     assert report.evidence
     assert report.recommendations
-    assert report.confidence == 0.0
-    assert report.recovery_tags == []
+    assert report.confidence > 0.0
+    assert "network" in report.recovery_tags
     assert report.related_packages == []
     assert report.suggested_python_versions == []
 
@@ -174,6 +181,68 @@ def test_analyze_install_error_classifies_dns_connection_failures_as_network_fai
 
     assert report.category == "network_failure"
     assert any("Failed to establish a new connection" in line for line in report.evidence)
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "expected_category", "expected_packages", "expected_python_versions"),
+    [
+        (
+            "pinned_resolver_conflict.txt",
+            "package_conflict",
+            ["numpy", "demo-lib"],
+            [],
+        ),
+        (
+            "python_requires.txt",
+            "python_version_incompatible",
+            ["demo-package"],
+            ["3.8", "3.10"],
+        ),
+        (
+            "no_matching_distribution.txt",
+            "package_conflict",
+            ["torch"],
+            ["3.10"],
+        ),
+        (
+            "network_dns_failure.txt",
+            "network_failure",
+            [],
+            [],
+        ),
+        (
+            "network_ssl_failure.txt",
+            "network_failure",
+            [],
+            [],
+        ),
+        (
+            "pytorch_cuda_mismatch.txt",
+            "pytorch_cuda_mismatch",
+            ["torch", "torchvision", "torchaudio"],
+            [],
+        ),
+        (
+            "missing_build_tools_windows.txt",
+            "missing_build_tools",
+            ["ujson"],
+            [],
+        ),
+    ],
+)
+def test_analyze_install_error_extracts_structured_metadata_from_log_fixtures(
+    fixture_name: str,
+    expected_category: str,
+    expected_packages: list[str],
+    expected_python_versions: list[str],
+) -> None:
+    report = analyze_install_error(stderr=_read_error_log(fixture_name))
+
+    assert report.category == expected_category
+    assert report.confidence > 0.0
+    assert report.evidence
+    assert report.related_packages == expected_packages
+    assert report.suggested_python_versions == expected_python_versions
 
 
 def test_render_conflict_report_formats_summary_evidence_and_next_steps() -> None:

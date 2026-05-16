@@ -1,0 +1,4 @@
+Looking in indexes: https://pypi.org/simple
+WARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("<pip._vendor.urllib3.connection.HTTPSConnection object at 0x10>: Failed to establish a new connection: [Errno -2] Name or service not known")': /simple/numpy/
+ERROR: Could not fetch URL https://pypi.org/simple/numpy/: There was a problem confirming the ssl certificate: /simple/numpy/
+ERROR: Temporary failure in name resolution

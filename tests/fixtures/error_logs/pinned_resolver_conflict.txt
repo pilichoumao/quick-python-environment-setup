@@ -1,0 +1,7 @@
+ERROR: Cannot install demo-lib==1.0.0 and numpy==2.0.0 because these package versions have conflicting dependencies.
+The conflict is caused by:
+    The user requested numpy==2.0.0
+    demo-lib 1.0.0 depends on numpy<2.0 and >=1.24
+To fix this you could try to:
+1. loosen the range of package versions you've specified
+2. remove package versions to allow pip to attempt to solve the dependency conflict

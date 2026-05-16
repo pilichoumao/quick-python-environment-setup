@@ -1,0 +1,5 @@
+Collecting torch==2.4.0+cu121
+Collecting torchvision==0.18.1+cu118
+Collecting torchaudio==2.4.0+cu121
+RuntimeError: Detected that PyTorch and torchvision were compiled with different CUDA versions. PyTorch has CUDA Version=12.1 and torchvision has CUDA Version=11.8.
+Install matching torch, torchvision, and torchaudio wheels for the same CUDA runtime.
