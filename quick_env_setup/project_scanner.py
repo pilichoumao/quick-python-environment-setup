@@ -7,7 +7,7 @@ from typing import Any
 from quick_env_setup.models import ProjectScanResult
 
 
-IGNORED_DIRECTORIES = {".git", ".venv", "__pycache__", "node_modules"}
+IGNORED_DIRECTORIES = {".git", ".venv", ".env_setup_logs", "__pycache__", "node_modules"}
 DEPENDENCY_FILE_NAMES = {
     "requirements.txt",
     "requirements-dev.txt",

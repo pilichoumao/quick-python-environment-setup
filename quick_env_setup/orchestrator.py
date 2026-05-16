@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from quick_env_setup.asset_detector import detect_missing_assets
-from quick_env_setup.conflict_analyzer import analyze_install_error
+from quick_env_setup.conflict_analyzer import analyze_install_error, render_conflict_report
 from quick_env_setup.dependency_installer import execute_install_plan as execute_action_plan
 from quick_env_setup.env_manager import EnvironmentTarget, get_env_manager
 from quick_env_setup.git_handler import build_clone_command, select_clone_target_path
@@ -136,7 +136,7 @@ def execute_install_plan(plan: InstallPlan) -> InstallWorkflowResult:
             stdout=execution_result.stdout_tail,
             stderr=execution_result.stderr_tail,
         )
-        error_summary_lines = [conflict_report.summary, *conflict_report.evidence, *conflict_report.recommendations]
+        error_summary_lines = render_conflict_report(conflict_report)
         error_summary_path = artifact_path(base_dir, "error_summary.txt")
         error_summary_path.write_text("".join(f"{line}\n" for line in error_summary_lines), encoding="utf-8")
         return InstallWorkflowResult(

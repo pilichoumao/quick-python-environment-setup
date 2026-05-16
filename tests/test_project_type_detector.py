@@ -31,6 +31,23 @@ def test_scan_project_ignores_node_modules_in_web_fixture() -> None:
     assert all("node_modules" not in str(path) for path in scan.detected_files)
 
 
+def test_scan_project_ignores_generated_env_setup_logs(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    logs_dir = project_root / ".env_setup_logs"
+    logs_dir.mkdir(parents=True)
+    (project_root / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (logs_dir / "install_plan.json").write_text(
+        '{"needs_pytorch": true, "run_candidates": ["python demo.py"]}\n',
+        encoding="utf-8",
+    )
+
+    scan = scan_project(project_root)
+
+    detected = {path.relative_to(project_root).as_posix() for path in scan.detected_files}
+    assert "app.py" in detected
+    assert ".env_setup_logs/install_plan.json" not in detected
+
+
 def test_scan_project_detects_notebooks_and_dependency_files() -> None:
     scan = scan_project(FIXTURES_ROOT / "notebook_project")
 

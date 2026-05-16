@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from quick_env_setup.conflict_analyzer import analyze_install_error
+from quick_env_setup.conflict_analyzer import analyze_install_error, render_conflict_report
 from quick_env_setup.dependency_installer import execute_install_plan
 from quick_env_setup.models import (
     DeviceInfo,
@@ -89,6 +89,47 @@ def test_analyze_install_error_does_not_misclassify_generic_version_conflict_as_
     )
 
     assert report.category == "package_conflict"
+
+
+def test_analyze_install_error_classifies_no_matching_distribution_as_package_conflict() -> None:
+    report = analyze_install_error(
+        stderr=(
+            "ERROR: Could not find a version that satisfies the requirement setuptools (from versions: none)\n"
+            "ERROR: No matching distribution found for setuptools\n"
+        )
+    )
+
+    assert report.category == "package_conflict"
+    assert any("No matching distribution found" in line for line in report.evidence)
+
+
+def test_analyze_install_error_classifies_dns_connection_failures_as_network_failure() -> None:
+    report = analyze_install_error(
+        stderr=(
+            "WARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, status=None)) "
+            "after connection broken by 'NewConnectionError(\"<pip._vendor.urllib3.connection.HTTPSConnection object at 0x0>: "
+            "Failed to establish a new connection: [Errno 8] nodename nor servname provided, or not known\")': /simple/pip/\n"
+        )
+    )
+
+    assert report.category == "network_failure"
+    assert any("Failed to establish a new connection" in line for line in report.evidence)
+
+
+def test_render_conflict_report_formats_summary_evidence_and_next_steps() -> None:
+    report = analyze_install_error(
+        stderr=(
+            "ERROR: Could not fetch URL https://pypi.org/simple/numpy/: "
+            "There was a problem confirming the ssl certificate\n"
+        )
+    )
+
+    lines = render_conflict_report(report)
+
+    assert lines[0] == "Category: network_failure"
+    assert lines[1].startswith("Summary: ")
+    assert "Evidence:" in lines
+    assert "Recommended next steps:" in lines
 
 
 def test_execute_install_plan_stops_on_first_failure_and_persists_structured_log(

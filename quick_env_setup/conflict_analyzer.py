@@ -12,6 +12,11 @@ _PATTERNS: tuple[tuple[ConflictCategory, tuple[re.Pattern[str], ...], str, list[
             re.compile(r"conflicting dependencies", re.IGNORECASE),
             re.compile(r"resolutionimpossible", re.IGNORECASE),
             re.compile(r"cannot install .* because these package versions have conflicting dependencies", re.IGNORECASE),
+            re.compile(r"could not find a version that satisfies the requirement", re.IGNORECASE),
+            re.compile(r"no matching distribution found", re.IGNORECASE),
+            re.compile(r"protobuf version conflict", re.IGNORECASE),
+            re.compile(r"numpy version conflict", re.IGNORECASE),
+            re.compile(r"pydantic v1/v2 conflict", re.IGNORECASE),
         ),
         "Dependency versions in the requested install set are incompatible.",
         [
@@ -83,6 +88,9 @@ _PATTERNS: tuple[tuple[ConflictCategory, tuple[re.Pattern[str], ...], str, list[
             re.compile(r"ssl certificate", re.IGNORECASE),
             re.compile(r"read timed out", re.IGNORECASE),
             re.compile(r"connection timed out", re.IGNORECASE),
+            re.compile(r"failed to establish a new connection", re.IGNORECASE),
+            re.compile(r"nodename nor servname provided", re.IGNORECASE),
+            re.compile(r"name or service not known", re.IGNORECASE),
         ),
         "Dependency download failed because the package index or network path was unavailable.",
         [
@@ -129,6 +137,20 @@ def analyze_conflict(
     stderr: str = "",
 ) -> ConflictReport:
     return analyze_install_error(output, stdout=stdout, stderr=stderr)
+
+
+def render_conflict_report(report: ConflictReport) -> list[str]:
+    lines = [
+        f"Category: {report.category}",
+        f"Summary: {report.summary}",
+    ]
+    if report.evidence:
+        lines.append("Evidence:")
+        lines.extend(f"- {line}" for line in report.evidence)
+    if report.recommendations:
+        lines.append("Recommended next steps:")
+        lines.extend(f"- {line}" for line in report.recommendations)
+    return lines
 
 
 def _match_evidence(text: str, patterns: tuple[re.Pattern[str], ...]) -> list[str]:
