@@ -278,6 +278,27 @@ def test_render_conflict_report_formats_summary_evidence_and_next_steps() -> Non
     assert any("certificate bundle" in line for line in lines)
 
 
+def test_render_conflict_report_keeps_fixed_sections_when_evidence_and_recommendations_are_empty() -> None:
+    lines = render_conflict_report(
+        ConflictReport(
+            category="unknown",
+            summary="The failure output did not match a known installation conflict pattern.",
+            evidence=[],
+            recommendations=[],
+        )
+    )
+
+    assert lines == [
+        "Category: unknown",
+        "Summary: The failure output did not match a known installation conflict pattern.",
+        "Why this likely happened: The captured output does not map cleanly to a known setup failure pattern yet.",
+        "Evidence:",
+        "- none",
+        "Recommended next steps:",
+        "- none",
+    ]
+
+
 def test_analyze_install_error_extracts_python_hints_from_wheel_tags_without_helper_prose() -> None:
     report = analyze_install_error(
         stderr=(

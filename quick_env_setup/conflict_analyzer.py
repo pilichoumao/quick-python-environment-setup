@@ -140,13 +140,17 @@ def render_conflict_report(report: ConflictReport) -> list[str]:
         f"Category: {report.category}",
         f"Summary: {report.summary}",
         f"Why this likely happened: {_likely_cause(report)}",
+        "Evidence:",
     ]
     if report.evidence:
-        lines.append("Evidence:")
         lines.extend(f"- {line}" for line in report.evidence)
+    else:
+        lines.append("- none")
+    lines.append("Recommended next steps:")
     if report.recommendations:
-        lines.append("Recommended next steps:")
         lines.extend(f"- {line}" for line in report.recommendations)
+    else:
+        lines.append("- none")
     return lines
 
 
