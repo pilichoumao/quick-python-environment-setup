@@ -272,6 +272,7 @@ def test_render_conflict_report_formats_summary_evidence_and_next_steps() -> Non
 
     assert lines[0] == "Category: network_failure"
     assert lines[1].startswith("Summary: ")
+    assert lines[2].startswith("Why this likely happened: ")
     assert "Evidence:" in lines
     assert "Recommended next steps:" in lines
     assert any("certificate bundle" in line for line in lines)

@@ -21,7 +21,13 @@ def generate_final_report(
     ensure_log_dir(base_dir)
 
     overview = _build_overview(plan, validation)
-    next_steps = _build_next_steps(validation, missing_assets, run_candidates)
+    next_steps = _build_next_steps(
+        plan=plan,
+        validation=validation,
+        missing_assets=missing_assets,
+        run_candidates=run_candidates,
+        error_summary_lines=error_summary_lines or validation.failures,
+    )
     merged_warnings = _merge_warnings(plan.warnings, validation.warnings)
     report = FinalReport(
         overview=overview,
@@ -101,18 +107,68 @@ def _build_overview(plan: InstallPlan, validation: ValidationReport) -> dict[str
 
 
 def _build_next_steps(
+    *,
+    plan: InstallPlan,
     validation: ValidationReport,
     missing_assets: list[str],
     run_candidates: list[str],
+    error_summary_lines: list[str],
 ) -> list[str]:
     steps: list[str] = []
     if missing_assets:
         steps.append("Resolve missing assets before executing project entrypoints.")
-    if validation.failures:
+    failure_diagnosis = _parse_failure_diagnosis(error_summary_lines)
+    if failure_diagnosis is not None:
+        steps.append("Diagnose the install failure in error_summary.txt before retrying the setup.")
+        if failure_diagnosis["first_recovery_step"]:
+            steps.append(f"First recovery step: {failure_diagnosis['first_recovery_step']}")
+        if failure_diagnosis["category"]:
+            steps.append(f"Detected failure category: {failure_diagnosis['category']}.")
+            context_step = _contextual_failure_step(
+                category=failure_diagnosis["category"],
+                plan=plan,
+            )
+            if context_step is not None:
+                steps.append(context_step)
+    elif validation.failures:
         steps.append("Review error_summary.txt and address the reported failures.")
     if run_candidates:
         steps.append("Try one of the discovered run candidates after environment setup completes.")
     return steps
+
+
+def _parse_failure_diagnosis(error_summary_lines: list[str]) -> dict[str, str] | None:
+    category = ""
+    first_recovery_step = ""
+    in_recommended_steps = False
+    for line in error_summary_lines:
+        if line.startswith("Category: "):
+            category = line.removeprefix("Category: ").strip()
+        if line == "Recommended next steps:":
+            in_recommended_steps = True
+            continue
+        if in_recommended_steps and line.startswith("- ") and first_recovery_step == "":
+            first_recovery_step = line[2:].strip()
+            break
+
+    if category == "" and first_recovery_step == "":
+        return None
+    return {
+        "category": category,
+        "first_recovery_step": first_recovery_step,
+    }
+
+
+def _contextual_failure_step(*, category: str, plan: InstallPlan) -> str | None:
+    if category == "python_version_incompatible":
+        return (
+            f"Compare the required interpreter range in error_summary.txt against the current plan target of Python {plan.python_requirement.version} before recreating the environment."
+        )
+    if category == "pytorch_cuda_mismatch":
+        return "Verify the selected PyTorch build matches the target CUDA runtime for this machine."
+    if category == "network_failure":
+        return "Network-related failures often recover after connectivity, mirror, or certificate issues are fixed."
+    return None
 
 
 def _render_final_report(report: FinalReport) -> str:

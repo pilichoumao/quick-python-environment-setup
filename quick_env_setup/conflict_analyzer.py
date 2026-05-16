@@ -139,6 +139,7 @@ def render_conflict_report(report: ConflictReport) -> list[str]:
     lines = [
         f"Category: {report.category}",
         f"Summary: {report.summary}",
+        f"Why this likely happened: {_likely_cause(report)}",
     ]
     if report.evidence:
         lines.append("Evidence:")
@@ -147,6 +148,22 @@ def render_conflict_report(report: ConflictReport) -> list[str]:
         lines.append("Recommended next steps:")
         lines.extend(f"- {line}" for line in report.recommendations)
     return lines
+
+
+def _likely_cause(report: ConflictReport) -> str:
+    if report.category == "python_version_incompatible":
+        return "The selected interpreter is outside the Requires-Python range declared by the project or one of its dependencies."
+    if report.category == "pytorch_cuda_mismatch":
+        return "The requested PyTorch wheels or companion packages target a different CUDA runtime than the one available on this machine."
+    if report.category == "missing_build_tools":
+        return "At least one dependency needs a native build step, but the required compiler toolchain is not installed."
+    if report.category == "missing_system_library":
+        return "A Python package loaded successfully, but the host operating system is missing a shared library it depends on."
+    if report.category == "network_failure":
+        return "The installer could not reliably reach the package index, mirror, proxy, or certificate chain needed to download dependencies."
+    if report.category == "package_conflict":
+        return "The requested dependency pins or published package metadata do not describe a single compatible install set."
+    return "The captured output does not map cleanly to a known setup failure pattern yet."
 
 
 def _detect_category(text: str) -> dict[str, object]:

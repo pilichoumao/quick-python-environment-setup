@@ -359,3 +359,108 @@ def test_generate_final_report_includes_conda_activation_and_run_hint(tmp_path: 
     assert "Activate and run:" in final_report_text
     assert "- conda activate demo-env" in final_report_text
     assert "- python app.py" in final_report_text
+
+
+def test_generate_final_report_guides_failed_recovery_with_specific_artifacts(tmp_path: Path) -> None:
+    project_root = tmp_path / "broken-project"
+    project_root.mkdir()
+    plan = InstallPlan(
+        source_result=SourceResolutionResult(
+            source=SourceSpec(
+                raw=str(project_root),
+                source_type="local_path",
+                normalized=str(project_root),
+            ),
+            local_project_path=project_root,
+            clone_performed=False,
+        ),
+        system_info=SystemInfo(
+            os_name="linux",
+            arch="x86_64",
+            is_apple_silicon=False,
+            has_conda=True,
+            has_git=True,
+            python_executables=["python3"],
+        ),
+        project_scan=ProjectScanResult(
+            root=project_root,
+            detected_files=[],
+            dependency_files=[],
+            readme_path=None,
+            python_entry_candidates=[],
+            notebook_paths=[],
+            keywords=set(),
+            parsed_dependency_hints={},
+        ),
+        project_profile=ProjectProfile(
+            project_type="web",
+            confidence=0.8,
+            needs_pytorch=False,
+            recommended_env_manager="venv",
+            editable_install_recommended=False,
+        ),
+        python_requirement=PythonRequirement(
+            version="3.10",
+            source="default",
+            rationale="Default selection.",
+        ),
+        env_manager="venv",
+        env_name="broken-project-env",
+        device_info=DeviceInfo(
+            accelerator_type="cpu",
+            gpu_name=None,
+            cuda_driver_version=None,
+            cuda_runtime_version=None,
+            nvidia_smi_available=False,
+        ),
+        pytorch_strategy=PyTorchStrategy(
+            required=True,
+            install_separately=True,
+            variant="cuda",
+            index_url="https://download.pytorch.org/whl/cu121",
+            packages=["torch", "torchvision"],
+            stripped_requirements_path=None,
+            rationale="GPU requested.",
+        ),
+        mirror_config=MirrorConfig(
+            enabled=False,
+            provider="none",
+            pip_index_url=None,
+            conda_channels=[],
+        ),
+        safety_level=2,
+        actions=[],
+        warnings=[],
+        assumptions=[],
+    )
+    validation = ValidationReport(
+        passed=False,
+        checks_run=["install-actions"],
+        failures=[
+            "Category: pytorch_cuda_mismatch",
+            "Summary: Installed PyTorch packages do not match the CUDA runtime.",
+            "Why this likely happened: The selected wheels target a different CUDA runtime than this machine or companion packages.",
+            "Evidence:",
+            "- RuntimeError: Detected that PyTorch and torchvision were compiled with different CUDA versions.",
+            "Recommended next steps:",
+            "- Install matching torch, torchvision, and torchaudio builds for the same CUDA runtime.",
+        ],
+        warnings=[],
+    )
+
+    generate_final_report(
+        base_dir=tmp_path,
+        plan=plan,
+        validation=validation,
+        run_candidates=[],
+        missing_assets=[],
+        error_summary_lines=validation.failures,
+    )
+
+    final_report_text = (tmp_path / ".env_setup_logs" / "final_report.txt").read_text(encoding="utf-8")
+
+    assert "Validation: failed" in final_report_text
+    assert "- Diagnose the install failure in error_summary.txt before retrying the setup." in final_report_text
+    assert "- First recovery step: Install matching torch, torchvision, and torchaudio builds for the same CUDA runtime." in final_report_text
+    assert "- Detected failure category: pytorch_cuda_mismatch." in final_report_text
+    assert "- Verify the selected PyTorch build matches the target CUDA runtime for this machine." in final_report_text

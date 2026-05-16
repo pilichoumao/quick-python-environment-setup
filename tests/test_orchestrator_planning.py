@@ -658,6 +658,12 @@ def test_execute_install_plan_enriches_conflict_report_before_writing_error_summ
     error_summary = result.artifact_paths["error_summary.txt"].read_text(encoding="utf-8")
     assert "Recommended next steps:" in error_summary
     assert "certificate bundle" in error_summary
+    final_report = result.artifact_paths["final_report.txt"].read_text(encoding="utf-8")
+    assert "Validation: failed" in final_report
+    assert "- Diagnose the install failure in error_summary.txt before retrying the setup." in final_report
+    assert "- First recovery step: Retry the install after confirming the package index is reachable from this machine." in final_report
+    assert "- Detected failure category: network_failure." in final_report
+    assert "- Network-related failures often recover after connectivity, mirror, or certificate issues are fixed." in final_report
 
 
 def test_execute_install_plan_uses_plan_python_version_in_failure_guidance(

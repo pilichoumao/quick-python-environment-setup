@@ -19,6 +19,7 @@ from quick_env_setup.models import (
     MirrorProvider,
     ProjectScanResult,
     SourceResolutionResult,
+    ValidationReport,
 )
 from quick_env_setup.project_scanner import scan_project
 from quick_env_setup.project_type_detector import detect_project_profile
@@ -149,8 +150,25 @@ def execute_install_plan(plan: InstallPlan) -> InstallWorkflowResult:
             stderr=execution_result.stderr_tail,
         )
         error_summary_lines = render_conflict_report(conflict_report)
-        error_summary_path = artifact_path(base_dir, "error_summary.txt")
-        error_summary_path.write_text("".join(f"{line}\n" for line in error_summary_lines), encoding="utf-8")
+        failure_report = generate_final_report(
+            base_dir=base_dir,
+            plan=plan,
+            validation=ValidationReport(
+                passed=False,
+                checks_run=[],
+                failures=error_summary_lines,
+                warnings=[conflict_report.summary],
+            ),
+            run_candidates=[],
+            missing_assets=[],
+            error_summary_lines=error_summary_lines,
+            agent_trace_lines=[
+                "build_install_plan",
+                "execute_install_plan",
+                "analyze_install_failure",
+                "generate_final_report",
+            ],
+        )
         return InstallWorkflowResult(
             plan=plan,
             execution_succeeded=False,
@@ -158,13 +176,19 @@ def execute_install_plan(plan: InstallPlan) -> InstallWorkflowResult:
             artifact_dir=artifact_dir,
             artifact_paths={
                 "commands.log": execution_result.log_path,
-                "error_summary.txt": error_summary_path,
+                "detected_config.json": artifact_path(base_dir, "detected_config.json"),
+                "install_plan.json": artifact_path(base_dir, "install_plan.json"),
+                "error_summary.txt": artifact_path(base_dir, "error_summary.txt"),
+                "run_candidates.txt": artifact_path(base_dir, "run_candidates.txt"),
+                "missing_assets.txt": artifact_path(base_dir, "missing_assets.txt"),
+                "final_report.txt": artifact_path(base_dir, "final_report.txt"),
+                "agent_trace_summary.txt": artifact_path(base_dir, "agent_trace_summary.txt"),
             },
             completed_action_ids=execution_result.completed_action_ids,
             failed_action_id=execution_result.failed_action_id,
             run_candidates=[],
             missing_assets=[],
-            warnings=[conflict_report.summary],
+            warnings=[*plan.warnings, *failure_report.warnings],
         )
 
     validation = validate_environment(plan)
