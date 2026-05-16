@@ -206,6 +206,10 @@ class ConflictReport:
     summary: str
     evidence: list[str]
     recommendations: list[str]
+    confidence: float = 0.0
+    recovery_tags: list[str] = field(default_factory=list)
+    related_packages: list[str] = field(default_factory=list)
+    suggested_python_versions: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

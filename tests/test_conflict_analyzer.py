@@ -8,6 +8,7 @@ import pytest
 from quick_env_setup.conflict_analyzer import analyze_install_error, render_conflict_report
 from quick_env_setup.dependency_installer import execute_install_plan
 from quick_env_setup.models import (
+    ConflictReport,
     DeviceInfo,
     InstallAction,
     InstallPlan,
@@ -21,6 +22,46 @@ from quick_env_setup.models import (
     SystemInfo,
 )
 from quick_env_setup.validator import validate_environment
+
+
+def test_conflict_report_supports_richer_diagnosis_metadata() -> None:
+    report = ConflictReport(
+        category="package_conflict",
+        summary="Dependency versions are incompatible.",
+        evidence=["numpy 2.0 conflicts with demo-lib<2.0"],
+        recommendations=["Relax the numpy pin and retry."],
+        confidence=0.85,
+        recovery_tags=["resolver", "retryable"],
+        related_packages=["numpy", "demo-lib"],
+        suggested_python_versions=["3.10", "3.11"],
+    )
+
+    assert report.category == "package_conflict"
+    assert report.summary == "Dependency versions are incompatible."
+    assert report.evidence == ["numpy 2.0 conflicts with demo-lib<2.0"]
+    assert report.recommendations == ["Relax the numpy pin and retry."]
+    assert report.confidence == pytest.approx(0.85)
+    assert report.recovery_tags == ["resolver", "retryable"]
+    assert report.related_packages == ["numpy", "demo-lib"]
+    assert report.suggested_python_versions == ["3.10", "3.11"]
+
+
+def test_conflict_report_keeps_existing_callers_compatible_with_optional_defaults() -> None:
+    report = analyze_install_error(
+        stderr=(
+            "ERROR: Could not fetch URL https://pypi.org/simple/numpy/: "
+            "There was a problem confirming the ssl certificate\n"
+        )
+    )
+
+    assert report.category == "network_failure"
+    assert report.summary
+    assert report.evidence
+    assert report.recommendations
+    assert report.confidence == 0.0
+    assert report.recovery_tags == []
+    assert report.related_packages == []
+    assert report.suggested_python_versions == []
 
 
 @pytest.mark.parametrize(
