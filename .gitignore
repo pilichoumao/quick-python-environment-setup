@@ -2,3 +2,6 @@
 .pytest_cache/
 __pycache__/
 *.pyc
+tests/fixtures/package_project/.env_setup_logs/
+tests/fixtures/package_project/.venv/
+tests/fixtures/package_project/src/*.egg-info/

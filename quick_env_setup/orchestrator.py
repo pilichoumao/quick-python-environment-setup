@@ -381,7 +381,13 @@ def _build_actions(
         InstallAction(
             action_id="create-environment",
             kind="create_env",
-            command=manager.build_create_command(target, python_version),
+            command=_build_create_environment_command(
+                manager=manager,
+                manager_name=env_manager_name,
+                target=target,
+                python_version=python_version,
+                system_info=system_info,
+            ),
             cwd=source_result.local_project_path,
             env_overrides={},
             risk_level=risk_level_for_action_kind("create_env"),
@@ -506,6 +512,42 @@ def _build_packaging_upgrade_command(
         os_name=os_name,
     )
     return [*base, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"]
+
+
+def _build_create_environment_command(
+    *,
+    manager: object,
+    manager_name: EnvManager,
+    target: EnvironmentTarget,
+    python_version: str,
+    system_info: object,
+) -> list[str]:
+    from quick_env_setup.models import SystemInfo
+
+    if manager_name != "venv":
+        return manager.build_create_command(target, python_version)
+
+    if not isinstance(system_info, SystemInfo):
+        raise TypeError("system_info must be a SystemInfo instance")
+
+    preferred = f"python{python_version}"
+    available = system_info.python_executables
+    if preferred in available:
+        python_executable = preferred
+    elif "python3" in available:
+        python_executable = "python3"
+    elif "python" in available:
+        python_executable = "python"
+    elif available:
+        python_executable = available[0]
+    else:
+        python_executable = preferred
+
+    return manager.build_create_command(
+        target,
+        python_version,
+        python_executable=python_executable,
+    )
 
 
 def _build_pytorch_install_command(

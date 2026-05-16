@@ -389,6 +389,38 @@ def test_pytorch_install_is_not_split_when_strategy_disables_it(monkeypatch: pyt
     assert all(action.kind != "install_pytorch" for action in plan.actions)
 
 
+def test_venv_plan_falls_back_to_detected_python_launcher_when_requested_one_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from quick_env_setup.models import SystemInfo
+    from quick_env_setup.orchestrator import build_install_plan
+
+    monkeypatch.setattr(
+        "quick_env_setup.orchestrator.detect_system_info",
+        lambda **_: SystemInfo(
+            os_name="linux",
+            arch="x86_64",
+            is_apple_silicon=False,
+            has_conda=True,
+            has_git=True,
+            python_executables=["python"],
+        ),
+    )
+
+    plan = build_install_plan(
+        source=str(FIXTURES / "package_project"),
+        env_manager="venv",
+    )
+
+    create_action = next(action for action in plan.actions if action.kind == "create_env")
+    assert create_action.command == [
+        "python",
+        "-m",
+        "venv",
+        str((FIXTURES / "package_project" / ".venv").resolve()),
+    ]
+
+
 def test_execute_install_plan_uses_consistent_artifact_dir_for_remote_source(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

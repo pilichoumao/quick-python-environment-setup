@@ -54,6 +54,7 @@ class EnvironmentManager(Protocol):
         self,
         target: EnvironmentTarget,
         python_version: str,
+        python_executable: str | None = None,
     ) -> list[str]:
         ...
 
@@ -74,7 +75,9 @@ class CondaEnvironmentManager:
         self,
         target: EnvironmentTarget,
         python_version: str,
+        python_executable: str | None = None,
     ) -> list[str]:
+        del python_executable
         return build_conda_create_command(
             env_name=target.require_env_name(),
             python_version=python_version,
@@ -102,10 +105,11 @@ class VenvEnvironmentManager:
         self,
         target: EnvironmentTarget,
         python_version: str,
+        python_executable: str | None = None,
     ) -> list[str]:
         return build_venv_create_command(
             env_path=target.require_env_path(),
-            python_executable=f"python{python_version}",
+            python_executable=python_executable or f"python{python_version}",
         )
 
     def build_pip_install_command(
