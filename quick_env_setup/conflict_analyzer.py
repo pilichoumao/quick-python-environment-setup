@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from quick_env_setup.models import ConflictCategory, ConflictReport
+from quick_env_setup.recovery_advisor import build_recovery_guidance
 
 
 _CATEGORY_SPECS: tuple[dict[str, object], ...] = (
@@ -136,16 +137,20 @@ def analyze_conflict(
 
 
 def render_conflict_report(report: ConflictReport) -> list[str]:
+    report_to_render = report
+    if not report.recommendations:
+        report_to_render = build_recovery_guidance(report)
+
     lines = [
-        f"Category: {report.category}",
-        f"Summary: {report.summary}",
+        f"Category: {report_to_render.category}",
+        f"Summary: {report_to_render.summary}",
     ]
-    if report.evidence:
+    if report_to_render.evidence:
         lines.append("Evidence:")
-        lines.extend(f"- {line}" for line in report.evidence)
-    if report.recommendations:
+        lines.extend(f"- {line}" for line in report_to_render.evidence)
+    if report_to_render.recommendations:
         lines.append("Recommended next steps:")
-        lines.extend(f"- {line}" for line in report.recommendations)
+        lines.extend(f"- {line}" for line in report_to_render.recommendations)
     return lines
 
 

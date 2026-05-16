@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from quick_env_setup.conflict_analyzer import analyze_install_error, render_conflict_report
-from quick_env_setup.recovery_advisor import build_recovery_guidance
 from quick_env_setup.dependency_installer import execute_install_plan
 from quick_env_setup.models import (
     ConflictReport,
@@ -248,14 +247,13 @@ def test_analyze_install_error_extracts_structured_metadata_from_log_fixtures(
 
 
 def test_render_conflict_report_formats_summary_evidence_and_next_steps() -> None:
-    report = build_recovery_guidance(
-        analyze_install_error(
+    report = analyze_install_error(
         stderr=(
             "ERROR: Could not fetch URL https://pypi.org/simple/numpy/: "
             "There was a problem confirming the ssl certificate\n"
         )
-        )
     )
+    assert report.recommendations == []
 
     lines = render_conflict_report(report)
 
@@ -263,6 +261,7 @@ def test_render_conflict_report_formats_summary_evidence_and_next_steps() -> Non
     assert lines[1].startswith("Summary: ")
     assert "Evidence:" in lines
     assert "Recommended next steps:" in lines
+    assert any("certificate bundle" in line for line in lines)
 
 
 def test_analyze_install_error_keeps_dns_and_ssl_tags_distinct() -> None:
