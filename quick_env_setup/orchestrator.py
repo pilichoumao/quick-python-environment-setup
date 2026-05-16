@@ -261,7 +261,7 @@ def _apply_install_failure_context(report, context: InstallFailureContext):
         recommendations = [
             recommendation
             for recommendation in recommendations
-            if "configure a package index mirror" not in recommendation.lower()
+            if "package index mirror" not in recommendation.lower()
         ]
         recommendations.append(
             f"Verify the configured {context.mirror_provider} mirror is reachable, or disable it temporarily to compare against the default index."
@@ -302,7 +302,11 @@ def _parse_major_minor_version(version: str) -> tuple[int, int] | None:
 def _extract_python_versions_from_evidence(evidence: list[str]) -> list[str]:
     versions: list[str] = []
     for line in evidence:
-        for match in re.finditer(r"(\d+\.\d+)", line):
+        for match in re.finditer(
+            r"(?:requires[- ]python|python)\s*(?:[<>=!~]=?\s*)+(\d+\.\d+)",
+            line,
+            re.IGNORECASE,
+        ):
             versions.append(match.group(1))
     return versions
 

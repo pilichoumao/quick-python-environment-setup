@@ -682,7 +682,7 @@ def test_execute_install_plan_uses_plan_python_version_in_failure_guidance(
             log_path=commands_log,
             stdout_tail="",
             stderr_tail=(
-                "ERROR: Package demo-lib requires Python >=3.11\n"
+                "ERROR: foo-3.12.0 requires Python >=3.11\n"
                 "ERROR: Could not find a version that satisfies the requirement demo-lib\n"
             ),
         ),
@@ -693,6 +693,7 @@ def test_execute_install_plan_uses_plan_python_version_in_failure_guidance(
     error_summary = result.artifact_paths["error_summary.txt"].read_text(encoding="utf-8")
     assert "current plan targets Python 3.10" in error_summary
     assert "upgrade the environment to python 3.11" in error_summary.lower()
+    assert "python 3.12" not in error_summary.lower()
 
 
 def test_execute_install_plan_prefers_cpu_fallback_for_cpu_pytorch_strategy(
@@ -772,7 +773,7 @@ def test_execute_install_plan_does_not_suggest_adopting_mirror_when_one_is_alrea
             exit_code=1,
             log_path=commands_log,
             stdout_tail="",
-            stderr_tail="ERROR: Could not fetch URL https://pypi.tuna.tsinghua.edu.cn/simple/demo/: Temporary failure in name resolution\n",
+            stderr_tail="ERROR: Could not fetch URL https://pypi.tuna.tsinghua.edu.cn/simple/demo/: Read timed out\n",
         ),
     )
 
@@ -781,7 +782,7 @@ def test_execute_install_plan_does_not_suggest_adopting_mirror_when_one_is_alrea
     error_summary = result.artifact_paths["error_summary.txt"].read_text(encoding="utf-8").lower()
     assert "configured tuna mirror" in error_summary
     assert "disable it temporarily to compare against the default index" in error_summary
-    assert "configure a package index mirror closer to the host" not in error_summary
+    assert "trusted package index mirror" not in error_summary
 
 
 def _make_cli_plan(fixture_root: Path) -> InstallPlan:
