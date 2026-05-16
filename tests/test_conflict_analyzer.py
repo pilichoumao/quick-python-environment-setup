@@ -159,6 +159,18 @@ def test_analyze_install_error_does_not_misclassify_generic_version_conflict_as_
     assert report.category == "package_conflict"
 
 
+def test_analyze_install_error_does_not_treat_python_prefixed_dependency_name_as_interpreter_issue() -> None:
+    report = analyze_install_error(
+        stderr=(
+            "ERROR: Cannot install matplotlib==3.8.0 because these package versions have conflicting dependencies.\n"
+            "matplotlib 3.8.0 requires python-dateutil>=2.8.2\n"
+            "The user requested python-dateutil==2.7.0\n"
+        )
+    )
+
+    assert report.category == "package_conflict"
+
+
 def test_analyze_install_error_classifies_no_matching_distribution_as_package_conflict() -> None:
     report = analyze_install_error(
         stderr=(

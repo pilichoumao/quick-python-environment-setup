@@ -11,7 +11,7 @@ _CATEGORY_SPECS: tuple[dict[str, object], ...] = (
         "patterns": (
             re.compile(r"requires a different python", re.IGNORECASE),
             re.compile(r"requires-python", re.IGNORECASE),
-            re.compile(r"requires python", re.IGNORECASE),
+            re.compile(r"requires python(?!-)\b", re.IGNORECASE),
             re.compile(r"python .* not in ['\"]?[<>=!,.\d\s]+['\"]?", re.IGNORECASE),
         ),
         "summary": "The selected Python interpreter does not satisfy the project or package requirement.",
