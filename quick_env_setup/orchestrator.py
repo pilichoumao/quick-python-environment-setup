@@ -23,6 +23,7 @@ from quick_env_setup.project_type_detector import detect_project_profile
 from quick_env_setup.python_version_resolver import resolve_python_requirement
 from quick_env_setup.device_detector import resolve_device_info
 from quick_env_setup.pytorch_resolver import resolve_pytorch_strategy
+from quick_env_setup.recovery_advisor import build_recovery_guidance
 from quick_env_setup.report_generator import generate_final_report
 from quick_env_setup.run_command_discoverer import discover_run_candidates
 from quick_env_setup.safety_policy import (
@@ -136,7 +137,8 @@ def execute_install_plan(plan: InstallPlan) -> InstallWorkflowResult:
             stdout=execution_result.stdout_tail,
             stderr=execution_result.stderr_tail,
         )
-        error_summary_lines = render_conflict_report(conflict_report)
+        enriched_conflict_report = build_recovery_guidance(conflict_report)
+        error_summary_lines = render_conflict_report(enriched_conflict_report)
         error_summary_path = artifact_path(base_dir, "error_summary.txt")
         error_summary_path.write_text("".join(f"{line}\n" for line in error_summary_lines), encoding="utf-8")
         return InstallWorkflowResult(
@@ -152,7 +154,7 @@ def execute_install_plan(plan: InstallPlan) -> InstallWorkflowResult:
             failed_action_id=execution_result.failed_action_id,
             run_candidates=[],
             missing_assets=[],
-            warnings=[conflict_report.summary],
+            warnings=[enriched_conflict_report.summary],
         )
 
     validation = validate_environment(plan)

@@ -543,6 +543,123 @@ def test_execute_install_plan_uses_consistent_artifact_dir_for_remote_source(
     assert all(path.parent == artifact_dir for path in result.artifact_paths.values())
 
 
+def test_execute_install_plan_enriches_conflict_report_before_writing_error_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from quick_env_setup.models import (
+        DeviceInfo,
+        ExecutionResult,
+        MirrorConfig,
+        ProjectProfile,
+        ProjectScanResult,
+        PyTorchStrategy,
+        PythonRequirement,
+        SourceResolutionResult,
+        SourceSpec,
+        SystemInfo,
+    )
+    from quick_env_setup.orchestrator import execute_install_plan
+
+    project_root = tmp_path / "broken-project"
+    project_root.mkdir()
+    plan = InstallPlan(
+        source_result=SourceResolutionResult(
+            source=SourceSpec(
+                raw=str(project_root),
+                source_type="local_path",
+                normalized=str(project_root),
+            ),
+            local_project_path=project_root,
+            clone_performed=False,
+        ),
+        system_info=SystemInfo(
+            os_name="linux",
+            arch="x86_64",
+            is_apple_silicon=False,
+            has_conda=True,
+            has_git=True,
+            python_executables=["python3"],
+        ),
+        project_scan=ProjectScanResult(
+            root=project_root,
+            detected_files=[],
+            dependency_files=[],
+            readme_path=None,
+            python_entry_candidates=[],
+            notebook_paths=[],
+            keywords=set(),
+            parsed_dependency_hints={},
+        ),
+        project_profile=ProjectProfile(
+            project_type="web",
+            confidence=0.8,
+            needs_pytorch=False,
+            recommended_env_manager="venv",
+            editable_install_recommended=False,
+        ),
+        python_requirement=PythonRequirement(
+            version="3.10",
+            source="default",
+            rationale="default",
+        ),
+        env_manager="venv",
+        env_name="broken-project-env",
+        device_info=DeviceInfo(
+            accelerator_type="cpu",
+            gpu_name=None,
+            cuda_driver_version=None,
+            cuda_runtime_version=None,
+            nvidia_smi_available=False,
+        ),
+        pytorch_strategy=PyTorchStrategy(
+            required=False,
+            install_separately=False,
+            variant="none",
+            index_url=None,
+            packages=[],
+            stripped_requirements_path=None,
+            rationale="not needed",
+        ),
+        mirror_config=MirrorConfig(
+            enabled=False,
+            provider="none",
+            pip_index_url=None,
+            conda_channels=[],
+        ),
+        safety_level=2,
+        actions=[],
+        warnings=[],
+        assumptions=[],
+    )
+
+    commands_log = project_root / ".env_setup_logs" / "commands.log"
+    commands_log.parent.mkdir(parents=True, exist_ok=True)
+    commands_log.write_text("command log\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "quick_env_setup.orchestrator.execute_action_plan",
+        lambda plan: ExecutionResult(
+            success=False,
+            completed_action_ids=["check-python"],
+            failed_action_id="install-dependencies",
+            exit_code=1,
+            log_path=commands_log,
+            stdout_tail="",
+            stderr_tail=(
+                "ERROR: Could not fetch URL https://pypi.org/simple/numpy/: "
+                "There was a problem confirming the ssl certificate\n"
+            ),
+        ),
+    )
+
+    result = execute_install_plan(plan)
+
+    error_summary = result.artifact_paths["error_summary.txt"].read_text(encoding="utf-8")
+    assert "Recommended next steps:" in error_summary
+    assert "certificate bundle" in error_summary
+
+
 def _make_cli_plan(fixture_root: Path) -> InstallPlan:
     from quick_env_setup.models import MirrorConfig
     from quick_env_setup.models import ProjectProfile, ProjectScanResult, PyTorchStrategy

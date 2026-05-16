@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from quick_env_setup.conflict_analyzer import analyze_install_error, render_conflict_report
+from quick_env_setup.recovery_advisor import build_recovery_guidance
 from quick_env_setup.dependency_installer import execute_install_plan
 from quick_env_setup.models import (
     ConflictReport,
@@ -202,7 +203,7 @@ def test_analyze_install_error_classifies_dns_connection_failures_as_network_fai
             "no_matching_distribution.txt",
             "package_conflict",
             ["torch"],
-            ["3.10"],
+            ["3.8", "3.9", "3.10"],
         ),
         (
             "network_dns_failure.txt",
@@ -255,13 +256,26 @@ def test_render_conflict_report_formats_summary_evidence_and_next_steps() -> Non
     )
     assert report.recommendations == []
 
-    lines = render_conflict_report(report)
+    lines = render_conflict_report(build_recovery_guidance(report))
 
     assert lines[0] == "Category: network_failure"
     assert lines[1].startswith("Summary: ")
     assert "Evidence:" in lines
     assert "Recommended next steps:" in lines
     assert any("certificate bundle" in line for line in lines)
+
+
+def test_analyze_install_error_extracts_python_hints_from_wheel_tags_without_helper_prose() -> None:
+    report = analyze_install_error(
+        stderr=(
+            "ERROR: No matching distribution found for demo-package\n"
+            "Available wheel files: demo_package-1.0.0-cp38-cp38-manylinux2014_x86_64.whl, "
+            "demo_package-1.0.0-cp39-cp39-manylinux2014_x86_64.whl, "
+            "demo_package-1.0.0-cp310-cp310-manylinux2014_x86_64.whl\n"
+        )
+    )
+
+    assert report.suggested_python_versions == ["3.8", "3.9", "3.10"]
 
 
 def test_analyze_install_error_keeps_dns_and_ssl_tags_distinct() -> None:

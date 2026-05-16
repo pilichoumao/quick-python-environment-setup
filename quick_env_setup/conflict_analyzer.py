@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 
 from quick_env_setup.models import ConflictCategory, ConflictReport
-from quick_env_setup.recovery_advisor import build_recovery_guidance
 
 
 _CATEGORY_SPECS: tuple[dict[str, object], ...] = (
@@ -101,7 +100,7 @@ _PACKAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 _PYTHON_CANDIDATE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"Python (\d+\.\d+)", re.IGNORECASE),
-    re.compile(r"cp(\d)(\d{2})", re.IGNORECASE),
+    re.compile(r"cp(\d)(\d{1,2})\b", re.IGNORECASE),
 )
 
 
@@ -137,20 +136,16 @@ def analyze_conflict(
 
 
 def render_conflict_report(report: ConflictReport) -> list[str]:
-    report_to_render = report
-    if not report.recommendations:
-        report_to_render = build_recovery_guidance(report)
-
     lines = [
-        f"Category: {report_to_render.category}",
-        f"Summary: {report_to_render.summary}",
+        f"Category: {report.category}",
+        f"Summary: {report.summary}",
     ]
-    if report_to_render.evidence:
+    if report.evidence:
         lines.append("Evidence:")
-        lines.extend(f"- {line}" for line in report_to_render.evidence)
-    if report_to_render.recommendations:
+        lines.extend(f"- {line}" for line in report.evidence)
+    if report.recommendations:
         lines.append("Recommended next steps:")
-        lines.extend(f"- {line}" for line in report_to_render.recommendations)
+        lines.extend(f"- {line}" for line in report.recommendations)
     return lines
 
 
@@ -189,10 +184,15 @@ def _extract_related_packages(text: str) -> list[str]:
 
 def _extract_python_version_hints(text: str) -> list[str]:
     versions: list[str] = []
-    for line in _non_empty_lines(text):
-        normalized_line = line.lower()
-        if "consider python" not in normalized_line and "try python" not in normalized_line:
-            continue
+    lines = _non_empty_lines(text)
+    preferred_lines = [
+        line
+        for line in lines
+        if "consider python" in line.lower() or "try python" in line.lower()
+    ]
+    fallback_lines = [line for line in lines if line not in preferred_lines]
+
+    for line in [*preferred_lines, *fallback_lines]:
         for pattern in _PYTHON_CANDIDATE_PATTERNS:
             for match in pattern.finditer(line):
                 version = _normalize_python_version_match(match)

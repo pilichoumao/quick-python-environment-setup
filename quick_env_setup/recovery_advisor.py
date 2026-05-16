@@ -10,10 +10,6 @@ def build_recovery_guidance(report: ConflictReport) -> ConflictReport:
     return replace(report, recommendations=recommendations)
 
 
-def enrich_conflict_report(report: ConflictReport) -> ConflictReport:
-    return build_recovery_guidance(report)
-
-
 def _recommendations_for_report(report: ConflictReport) -> list[str]:
     if report.category == "python_version_incompatible":
         return _python_version_recommendations(report)
