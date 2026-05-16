@@ -660,6 +660,130 @@ def test_execute_install_plan_enriches_conflict_report_before_writing_error_summ
     assert "certificate bundle" in error_summary
 
 
+def test_execute_install_plan_uses_plan_python_version_in_failure_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from quick_env_setup.models import ExecutionResult
+    from quick_env_setup.orchestrator import execute_install_plan
+
+    plan = _make_failure_plan(tmp_path / "python-version-project")
+    commands_log = plan.source_result.local_project_path / ".env_setup_logs" / "commands.log"
+    commands_log.parent.mkdir(parents=True, exist_ok=True)
+    commands_log.write_text("command log\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "quick_env_setup.orchestrator.execute_action_plan",
+        lambda plan: ExecutionResult(
+            success=False,
+            completed_action_ids=["create-environment"],
+            failed_action_id="install-dependencies",
+            exit_code=1,
+            log_path=commands_log,
+            stdout_tail="",
+            stderr_tail=(
+                "ERROR: Package demo-lib requires Python >=3.11\n"
+                "ERROR: Could not find a version that satisfies the requirement demo-lib\n"
+            ),
+        ),
+    )
+
+    result = execute_install_plan(plan)
+
+    error_summary = result.artifact_paths["error_summary.txt"].read_text(encoding="utf-8")
+    assert "current plan targets Python 3.10" in error_summary
+    assert "upgrade the environment to python 3.11" in error_summary.lower()
+
+
+def test_execute_install_plan_prefers_cpu_fallback_for_cpu_pytorch_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from quick_env_setup.models import ExecutionResult, PyTorchStrategy
+    from quick_env_setup.orchestrator import execute_install_plan
+
+    plan = _make_failure_plan(
+        tmp_path / "cpu-pytorch-project",
+        pytorch_strategy=PyTorchStrategy(
+            required=True,
+            install_separately=True,
+            variant="cpu",
+            index_url="https://download.pytorch.org/whl/cpu",
+            packages=["torch", "torchvision", "torchaudio"],
+            stripped_requirements_path=None,
+            rationale="cpu requested",
+        ),
+    )
+    commands_log = plan.source_result.local_project_path / ".env_setup_logs" / "commands.log"
+    commands_log.parent.mkdir(parents=True, exist_ok=True)
+    commands_log.write_text("command log\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "quick_env_setup.orchestrator.execute_action_plan",
+        lambda plan: ExecutionResult(
+            success=False,
+            completed_action_ids=["create-environment"],
+            failed_action_id="install-pytorch",
+            exit_code=1,
+            log_path=commands_log,
+            stdout_tail="",
+            stderr_tail="RuntimeError: Torch not compiled with CUDA enabled\n",
+        ),
+    )
+
+    result = execute_install_plan(plan)
+
+    error_summary_lines = result.artifact_paths["error_summary.txt"].read_text(encoding="utf-8").splitlines()
+    recommendations_start = error_summary_lines.index("Recommended next steps:") + 1
+    recommendation_lines = [
+        line for line in error_summary_lines[recommendations_start:] if line.startswith("- ")
+    ]
+    assert recommendation_lines
+    assert "cpu-only wheels" in recommendation_lines[0].lower()
+    assert "plan already targets the cpu variant" in recommendation_lines[0].lower()
+
+
+def test_execute_install_plan_does_not_suggest_adopting_mirror_when_one_is_already_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from quick_env_setup.models import ExecutionResult, MirrorConfig
+    from quick_env_setup.orchestrator import execute_install_plan
+
+    plan = _make_failure_plan(
+        tmp_path / "mirror-network-project",
+        mirror_config=MirrorConfig(
+            enabled=True,
+            provider="tuna",
+            pip_index_url="https://pypi.tuna.tsinghua.edu.cn/simple",
+            conda_channels=["https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main"],
+        ),
+    )
+    commands_log = plan.source_result.local_project_path / ".env_setup_logs" / "commands.log"
+    commands_log.parent.mkdir(parents=True, exist_ok=True)
+    commands_log.write_text("command log\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "quick_env_setup.orchestrator.execute_action_plan",
+        lambda plan: ExecutionResult(
+            success=False,
+            completed_action_ids=["create-environment"],
+            failed_action_id="install-dependencies",
+            exit_code=1,
+            log_path=commands_log,
+            stdout_tail="",
+            stderr_tail="ERROR: Could not fetch URL https://pypi.tuna.tsinghua.edu.cn/simple/demo/: Temporary failure in name resolution\n",
+        ),
+    )
+
+    result = execute_install_plan(plan)
+
+    error_summary = result.artifact_paths["error_summary.txt"].read_text(encoding="utf-8").lower()
+    assert "configured tuna mirror" in error_summary
+    assert "disable it temporarily to compare against the default index" in error_summary
+    assert "configure a package index mirror closer to the host" not in error_summary
+
+
 def _make_cli_plan(fixture_root: Path) -> InstallPlan:
     from quick_env_setup.models import MirrorConfig
     from quick_env_setup.models import ProjectProfile, ProjectScanResult, PyTorchStrategy
@@ -860,6 +984,101 @@ def _make_cli_plan(project_root: Path) -> InstallPlan:
                 description="Create the environment.",
             ),
         ],
+        warnings=[],
+        assumptions=[],
+    )
+
+
+def _make_failure_plan(
+    project_root: Path,
+    *,
+    python_version: str = "3.10",
+    pytorch_strategy: object | None = None,
+    mirror_config: object | None = None,
+) -> InstallPlan:
+    from quick_env_setup.models import MirrorConfig
+    from quick_env_setup.models import ProjectProfile, ProjectScanResult, PyTorchStrategy
+    from quick_env_setup.models import PythonRequirement, SourceResolutionResult, SourceSpec
+    from quick_env_setup.models import SystemInfo, DeviceInfo
+
+    project_root.mkdir(parents=True, exist_ok=True)
+    resolved_pytorch_strategy = (
+        pytorch_strategy
+        if isinstance(pytorch_strategy, PyTorchStrategy)
+        else PyTorchStrategy(
+            required=False,
+            install_separately=False,
+            variant="none",
+            index_url=None,
+            packages=[],
+            stripped_requirements_path=None,
+            rationale="not needed",
+        )
+    )
+    resolved_mirror_config = (
+        mirror_config
+        if isinstance(mirror_config, MirrorConfig)
+        else MirrorConfig(
+            enabled=False,
+            provider="none",
+            pip_index_url=None,
+            conda_channels=[],
+        )
+    )
+
+    return InstallPlan(
+        source_result=SourceResolutionResult(
+            source=SourceSpec(
+                raw=str(project_root),
+                source_type="local_path",
+                normalized=str(project_root),
+            ),
+            local_project_path=project_root,
+            clone_performed=False,
+        ),
+        system_info=SystemInfo(
+            os_name="linux",
+            arch="x86_64",
+            is_apple_silicon=False,
+            has_conda=True,
+            has_git=True,
+            python_executables=["python3"],
+        ),
+        project_scan=ProjectScanResult(
+            root=project_root,
+            detected_files=[],
+            dependency_files=[],
+            readme_path=None,
+            python_entry_candidates=[],
+            notebook_paths=[],
+            keywords=set(),
+            parsed_dependency_hints={},
+        ),
+        project_profile=ProjectProfile(
+            project_type="web",
+            confidence=0.8,
+            needs_pytorch=resolved_pytorch_strategy.required,
+            recommended_env_manager="venv",
+            editable_install_recommended=False,
+        ),
+        python_requirement=PythonRequirement(
+            version=python_version,
+            source="default",
+            rationale="default",
+        ),
+        env_manager="venv",
+        env_name=f"{project_root.name}-env",
+        device_info=DeviceInfo(
+            accelerator_type="cpu",
+            gpu_name=None,
+            cuda_driver_version=None,
+            cuda_runtime_version=None,
+            nvidia_smi_available=False,
+        ),
+        pytorch_strategy=resolved_pytorch_strategy,
+        mirror_config=resolved_mirror_config,
+        safety_level=2,
+        actions=[],
         warnings=[],
         assumptions=[],
     )

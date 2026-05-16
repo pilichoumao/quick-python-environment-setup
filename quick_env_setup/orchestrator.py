@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass, replace
 from pathlib import Path
+import re
 
 from quick_env_setup.asset_detector import detect_missing_assets
 from quick_env_setup.conflict_analyzer import analyze_install_error, render_conflict_report
@@ -35,6 +37,14 @@ from quick_env_setup.source_resolver import parse_source_spec
 from quick_env_setup.system_detector import detect_system_info
 from quick_env_setup.utils import InstallWorkflowResult
 from quick_env_setup.validator import validate_environment
+
+
+@dataclass(frozen=True, slots=True)
+class InstallFailureContext:
+    python_version: str
+    pytorch_variant: str
+    mirror_enabled: bool
+    mirror_provider: MirrorProvider
 
 
 def build_install_plan(
@@ -133,12 +143,12 @@ def execute_install_plan(plan: InstallPlan) -> InstallWorkflowResult:
     execution_result = execute_action_plan(plan)
 
     if not execution_result.success:
-        conflict_report = analyze_install_error(
+        conflict_report = _analyze_install_failure(
+            plan=plan,
             stdout=execution_result.stdout_tail,
             stderr=execution_result.stderr_tail,
         )
-        enriched_conflict_report = build_recovery_guidance(conflict_report)
-        error_summary_lines = render_conflict_report(enriched_conflict_report)
+        error_summary_lines = render_conflict_report(conflict_report)
         error_summary_path = artifact_path(base_dir, "error_summary.txt")
         error_summary_path.write_text("".join(f"{line}\n" for line in error_summary_lines), encoding="utf-8")
         return InstallWorkflowResult(
@@ -154,7 +164,7 @@ def execute_install_plan(plan: InstallPlan) -> InstallWorkflowResult:
             failed_action_id=execution_result.failed_action_id,
             run_candidates=[],
             missing_assets=[],
-            warnings=[enriched_conflict_report.summary],
+            warnings=[conflict_report.summary],
         )
 
     validation = validate_environment(plan)
@@ -206,6 +216,95 @@ def _artifact_base_dir(plan: InstallPlan) -> Path:
     if plan.source_result.source.source_type == "git_url" and not project_root.exists():
         return project_root.parent
     return project_root
+
+
+def _analyze_install_failure(
+    *,
+    plan: InstallPlan,
+    stdout: str,
+    stderr: str,
+):
+    failure_context = _build_install_failure_context(plan)
+    conflict_report = analyze_install_error(stdout=stdout, stderr=stderr)
+    enriched_conflict_report = build_recovery_guidance(conflict_report)
+    return _apply_install_failure_context(enriched_conflict_report, failure_context)
+
+
+def _build_install_failure_context(plan: InstallPlan) -> InstallFailureContext:
+    return InstallFailureContext(
+        python_version=plan.python_requirement.version,
+        pytorch_variant=plan.pytorch_strategy.variant,
+        mirror_enabled=plan.mirror_config.enabled,
+        mirror_provider=plan.mirror_config.provider,
+    )
+
+
+def _apply_install_failure_context(report, context: InstallFailureContext):
+    recommendations = list(report.recommendations)
+
+    if report.category == "python_version_incompatible":
+        python_recommendation = _python_upgrade_recommendation(report, context)
+        if python_recommendation is not None:
+            recommendations.insert(0, python_recommendation)
+
+    if report.category == "pytorch_cuda_mismatch" and context.pytorch_variant == "cpu":
+        recommendations = [
+            "Retry with CPU-only wheels because this plan already targets the CPU variant.",
+            *[
+                recommendation
+                for recommendation in recommendations
+                if "cpu-only wheels" not in recommendation.lower()
+            ],
+        ]
+
+    if report.category == "network_failure" and context.mirror_enabled:
+        recommendations = [
+            recommendation
+            for recommendation in recommendations
+            if "configure a package index mirror" not in recommendation.lower()
+        ]
+        recommendations.append(
+            f"Verify the configured {context.mirror_provider} mirror is reachable, or disable it temporarily to compare against the default index."
+        )
+
+    return replace(report, recommendations=recommendations)
+
+
+def _python_upgrade_recommendation(report, context: InstallFailureContext) -> str | None:
+    current_version = _parse_major_minor_version(context.python_version)
+    if current_version is None:
+        return None
+
+    candidate_versions = [
+        *report.suggested_python_versions,
+        *_extract_python_versions_from_evidence(report.evidence),
+    ]
+    for candidate in candidate_versions:
+        candidate_version = _parse_major_minor_version(candidate)
+        if candidate_version is None:
+            continue
+        if candidate_version > current_version:
+            return (
+                f"Upgrade the environment to Python {candidate} or newer because the current plan targets Python {context.python_version}."
+            )
+    return None
+
+
+def _parse_major_minor_version(version: str) -> tuple[int, int] | None:
+    parts = version.strip().split(".")
+    if len(parts) < 2:
+        return None
+    if not parts[0].isdigit() or not parts[1].isdigit():
+        return None
+    return int(parts[0]), int(parts[1])
+
+
+def _extract_python_versions_from_evidence(evidence: list[str]) -> list[str]:
+    versions: list[str] = []
+    for line in evidence:
+        for match in re.finditer(r"(\d+\.\d+)", line):
+            versions.append(match.group(1))
+    return versions
 
 
 def _format_missing_asset(item: object) -> str:
