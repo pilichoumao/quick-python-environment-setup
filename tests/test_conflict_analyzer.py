@@ -20,6 +20,7 @@ from quick_env_setup.models import (
     SourceResolutionResult,
     SourceSpec,
     SystemInfo,
+    dataclass_to_dict,
 )
 from quick_env_setup.validator import validate_environment
 
@@ -62,6 +63,24 @@ def test_conflict_report_keeps_existing_callers_compatible_with_optional_default
     assert report.recovery_tags == []
     assert report.related_packages == []
     assert report.suggested_python_versions == []
+
+    serialized = dataclass_to_dict(
+        ConflictReport(
+            category="unknown",
+            summary="No known conflict pattern matched.",
+            evidence=["No stdout or stderr was captured."],
+            recommendations=["Review the failing command output."],
+        )
+    )
+
+    assert serialized["category"] == "unknown"
+    assert serialized["summary"] == "No known conflict pattern matched."
+    assert serialized["evidence"] == ["No stdout or stderr was captured."]
+    assert serialized["recommendations"] == ["Review the failing command output."]
+    assert serialized["confidence"] == 0.0
+    assert serialized["recovery_tags"] == []
+    assert serialized["related_packages"] == []
+    assert serialized["suggested_python_versions"] == []
 
 
 @pytest.mark.parametrize(
