@@ -20,13 +20,17 @@ def generate_final_report(
 ) -> FinalReport:
     ensure_log_dir(base_dir)
 
+    normalized_error_summary_lines = _normalize_error_summary_lines(
+        error_summary_lines or validation.failures
+    )
+
     overview = _build_overview(plan, validation)
     next_steps = _build_next_steps(
         plan=plan,
         validation=validation,
         missing_assets=missing_assets,
         run_candidates=run_candidates,
-        error_summary_lines=error_summary_lines or validation.failures,
+        error_summary_lines=normalized_error_summary_lines,
     )
     merged_warnings = _merge_warnings(plan.warnings, validation.warnings)
     report = FinalReport(
@@ -43,7 +47,7 @@ def generate_final_report(
         _build_detected_config(plan, validation, run_candidates, missing_assets),
     )
     _write_json(artifact_path(base_dir, "install_plan.json"), plan.to_dict())
-    _write_lines(artifact_path(base_dir, "error_summary.txt"), error_summary_lines or validation.failures)
+    _write_lines(artifact_path(base_dir, "error_summary.txt"), normalized_error_summary_lines)
     _write_lines(artifact_path(base_dir, "run_candidates.txt"), run_candidates)
     _write_lines(artifact_path(base_dir, "missing_assets.txt"), missing_assets)
     _write_lines(
@@ -148,7 +152,10 @@ def _parse_failure_diagnosis(error_summary_lines: list[str]) -> dict[str, str] |
             in_recommended_steps = True
             continue
         if in_recommended_steps and line.startswith("- ") and first_recovery_step == "":
-            first_recovery_step = line[2:].strip()
+            candidate_step = line[2:].strip()
+            if candidate_step.lower() == "none":
+                continue
+            first_recovery_step = candidate_step
             break
 
     if category == "" and first_recovery_step == "":
@@ -157,6 +164,41 @@ def _parse_failure_diagnosis(error_summary_lines: list[str]) -> dict[str, str] |
         "category": category,
         "first_recovery_step": first_recovery_step,
     }
+
+
+def _normalize_error_summary_lines(error_summary_lines: list[str]) -> list[str]:
+    if _has_stable_diagnostic_sections(error_summary_lines):
+        return error_summary_lines
+
+    summary = error_summary_lines[0].strip() if error_summary_lines else "No failure details were captured."
+    evidence = [line.strip() for line in error_summary_lines if line.strip()]
+
+    lines = [
+        "Category: unknown",
+        f"Summary: {summary}",
+        "Why this likely happened: The validation or setup output did not include a classified install-failure category, so this report is preserving the raw failure details.",
+        "Evidence:",
+    ]
+    if evidence:
+        lines.extend(f"- {line}" for line in evidence)
+    else:
+        lines.append("- none")
+    lines.append("Recommended next steps:")
+    lines.append("- none")
+    return lines
+
+
+def _has_stable_diagnostic_sections(error_summary_lines: list[str]) -> bool:
+    required_prefixes = (
+        "Category: ",
+        "Summary: ",
+        "Why this likely happened: ",
+    )
+    if len(error_summary_lines) < 5:
+        return False
+    if not all(error_summary_lines[index].startswith(prefix) for index, prefix in enumerate(required_prefixes)):
+        return False
+    return "Evidence:" in error_summary_lines and "Recommended next steps:" in error_summary_lines
 
 
 def _contextual_failure_step(*, category: str, plan: InstallPlan) -> str | None:

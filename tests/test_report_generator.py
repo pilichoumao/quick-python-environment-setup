@@ -232,7 +232,13 @@ def test_generate_final_report_writes_expected_artifacts(tmp_path: Path) -> None
     }
     assert json.loads((artifact_dir / "install_plan.json").read_text(encoding="utf-8"))["env_name"] == "example-project-env"
     assert (artifact_dir / "error_summary.txt").read_text(encoding="utf-8").splitlines() == [
-        "Missing weights/model.pt"
+        "Category: unknown",
+        "Summary: Missing weights/model.pt",
+        "Why this likely happened: The validation or setup output did not include a classified install-failure category, so this report is preserving the raw failure details.",
+        "Evidence:",
+        "- Missing weights/model.pt",
+        "Recommended next steps:",
+        "- none",
     ]
     assert (artifact_dir / "run_candidates.txt").read_text(encoding="utf-8").splitlines() == [
         "python app.py"
@@ -254,6 +260,9 @@ def test_generate_final_report_writes_expected_artifacts(tmp_path: Path) -> None
     assert "Warnings:" in final_report_text
     assert "Activate and run:" not in final_report_text
     assert "- source .venv/bin/activate" not in final_report_text
+    assert "- Diagnose the install failure in error_summary.txt before retrying the setup." in final_report_text
+    assert "- Detected failure category: unknown." in final_report_text
+    assert "First recovery step: none" not in final_report_text
     assert "- Use a dedicated virtual environment." in final_report_text
     assert "- Run candidates are heuristic only." in final_report_text
     assert (
@@ -464,3 +473,105 @@ def test_generate_final_report_guides_failed_recovery_with_specific_artifacts(tm
     assert "- First recovery step: Install matching torch, torchvision, and torchaudio builds for the same CUDA runtime." in final_report_text
     assert "- Detected failure category: pytorch_cuda_mismatch." in final_report_text
     assert "- Verify the selected PyTorch build matches the target CUDA runtime for this machine." in final_report_text
+
+
+def test_generate_final_report_does_not_treat_none_placeholder_as_real_recovery_step(tmp_path: Path) -> None:
+    project_root = tmp_path / "placeholder-project"
+    project_root.mkdir()
+    plan = InstallPlan(
+        source_result=SourceResolutionResult(
+            source=SourceSpec(
+                raw=str(project_root),
+                source_type="local_path",
+                normalized=str(project_root),
+            ),
+            local_project_path=project_root,
+            clone_performed=False,
+        ),
+        system_info=SystemInfo(
+            os_name="linux",
+            arch="x86_64",
+            is_apple_silicon=False,
+            has_conda=True,
+            has_git=True,
+            python_executables=["python3"],
+        ),
+        project_scan=ProjectScanResult(
+            root=project_root,
+            detected_files=[],
+            dependency_files=[],
+            readme_path=None,
+            python_entry_candidates=[],
+            notebook_paths=[],
+            keywords=set(),
+            parsed_dependency_hints={},
+        ),
+        project_profile=ProjectProfile(
+            project_type="web",
+            confidence=0.8,
+            needs_pytorch=False,
+            recommended_env_manager="venv",
+            editable_install_recommended=False,
+        ),
+        python_requirement=PythonRequirement(
+            version="3.10",
+            source="default",
+            rationale="Default selection.",
+        ),
+        env_manager="venv",
+        env_name="placeholder-project-env",
+        device_info=DeviceInfo(
+            accelerator_type="cpu",
+            gpu_name=None,
+            cuda_driver_version=None,
+            cuda_runtime_version=None,
+            nvidia_smi_available=False,
+        ),
+        pytorch_strategy=PyTorchStrategy(
+            required=False,
+            install_separately=False,
+            variant="none",
+            index_url=None,
+            packages=[],
+            stripped_requirements_path=None,
+            rationale="Not required.",
+        ),
+        mirror_config=MirrorConfig(
+            enabled=False,
+            provider="none",
+            pip_index_url=None,
+            conda_channels=[],
+        ),
+        safety_level=2,
+        actions=[],
+        warnings=[],
+        assumptions=[],
+    )
+    validation = ValidationReport(
+        passed=False,
+        checks_run=["validate"],
+        failures=[
+            "Category: unknown",
+            "Summary: Validation failed without a classified category.",
+            "Why this likely happened: The validation output did not match a known setup failure pattern.",
+            "Evidence:",
+            "- none",
+            "Recommended next steps:",
+            "- none",
+        ],
+        warnings=[],
+    )
+
+    generate_final_report(
+        base_dir=tmp_path,
+        plan=plan,
+        validation=validation,
+        run_candidates=[],
+        missing_assets=[],
+        error_summary_lines=validation.failures,
+    )
+
+    final_report_text = (tmp_path / ".env_setup_logs" / "final_report.txt").read_text(encoding="utf-8")
+
+    assert "First recovery step: none" not in final_report_text
+    assert "- Detected failure category: unknown." in final_report_text
